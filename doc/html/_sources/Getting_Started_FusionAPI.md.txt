@@ -81,7 +81,7 @@ It may be noted that `conv_desc` is the regular MIOpen Convolution descriptor an
 
 During this process, it is important that the returned codes be checked to make sure that the operations as well as their order is supported. The operator insertion might fail for a number of reasons such as unsupported sequence of operations, unsupported dimensions of the input or in case of convolution unsupported dimensions for the filters. In the above example, these aspects are ignored for the sake of simplicity.
 
-## <a name="compile_fusion"></a>Compile the Fusion Plan
+## Compile the Fusion Plan
 
 Following the operator addition, the user would compile the fusion plan, to populate the MIOpen kernel cache with the fused kernel and make it ready for execution. The API call that accomplishes this is:
 
@@ -182,66 +182,21 @@ Once the application is done with the fusion plan, the fusion plan and the fusio
 
 ```cpp
 miopenStatus_t miopenDestroyFusionPlan(miopenFusionPlanDescriptor_t fusePlanDesc);
-
-miopenStatus_t miopenDestroyFusionPlan(miopenFusionPlanDescriptor_t fusePlanDesc);
 ```
 Once the fusion plan object is destroyed, all the operations created are destroyed automatically and do not need any special cleanup.
 
 
-## <a name="supported_fusions"></a> Supported Fusions
-The table below outlines the supported fusions as well as any applicable constraints. Currently, only convolutions with unit stride and unit dilation are supported. Currently, the fusion API is in the initial phases of development and may change.
-
-<table border=0 cellpadding=0 cellspacing=0 width=713 style='border-collapse:
- collapse;table-layout:fixed;width:534pt'>
- <col width=108 style='mso-width-source:userset;mso-width-alt:3456;width:81pt'>
- <col width=87 style='width:65pt'>
- <col width=221 style='mso-width-source:userset;mso-width-alt:7082;width:166pt'>
- <col width=87 style='width:65pt'>
- <col width=123 style='mso-width-source:userset;mso-width-alt:3925;width:92pt'>
- <col width=87 style='width:65pt'>
- <tr height=45 style='height:34.0pt'>
-  <td height=45 class=xl65 width=108 style='height:34.0pt;width:81pt'>Combination</td>
-  <td class=xl65 width=87 style='width:65pt'>Conv Algo</td>
-  <td class=xl65 width=221 style='width:166pt'>Filter Dims</td>
-  <td class=xl65 width=87 style='width:65pt'>BN Mode</td>
-  <td class=xl65 width=123 style='width:92pt'>Activations</td>
-  <td class=xl65 width=87 style='width:65pt'>Other Constraints</td>
- </tr>
- <tr height=45 style='height:34.0pt'>
-  <td height=45 class=xl66 width=108 style='height:34.0pt;width:81pt'>CBNA</td>
-  <td class=xl66 width=87 style='width:65pt'>Direct</td>
-  <td class=xl66 width=221 style='width:166pt'>1x1, 3x3, 5x5, 7x7, 9x9, 11x11</td>
-  <td class=xl66 width=87 style='width:65pt'>All</td>
-  <td class=xl66 width=123 style='width:92pt'>All</td>
-  <td class=xl66 width=87 style='width:65pt'>Padding not supported</td>
- </tr>
- <tr height=23 style='height:17.0pt'>
-  <td rowspan=2 height=46 class=xl67 width=108 style='height:34.0pt;width:81pt'>CBA</td>
-  <td class=xl66 width=87 style='width:65pt'>Direct</td>
-  <td class=xl66 width=221 style='width:166pt'>1x1, 3x3, 5x5, 7x7, 9x9, 11x11</td>
-  <td class=xl66 width=87 style='width:65pt'></td>
-  <td class=xl66 width=123 style='width:92pt'>All</td>
-  <td class=xl66 width=87 style='width:65pt'></td>
- </tr>
- <tr height=23 style='height:17.0pt'>
-  <td height=23 class=xl66 width=87 style='height:17.0pt;width:65pt'>Winograd</td>
-  <td class=xl66 width=221 style='width:166pt'>3x3</td>
-  <td class=xl66 width=87 style='width:65pt'>N/A</td>
-  <td class=xl66 width=123 style='width:92pt'>Relu, Leaky Relu</td>
-  <td class=xl66 width=87 style='width:65pt'>c &gt;= 18</td>
- </tr>
- <tr height=45 style='height:34.0pt'>
-  <td height=45 class=xl66 width=108 style='height:34.0pt;width:81pt'>NA</td>
-  <td class=xl66 width=87 style='width:65pt'>-</td>
-  <td class=xl66 width=221 style='width:166pt'>-</td>
-  <td class=xl66 width=87 style='width:65pt'>All</td>
-  <td class=xl66 width=123 style='width:92pt'>All</td>
-  <td class=xl66 width=87 style='width:65pt'>Padding not supported</td>
- </tr>
-</table>
+## Supported Fusions 
+The tables below outlines the supported fusions for fp32 and fp16 as well as any applicable constraints. **(C = convolution, B = bias, N = batch normalization, A = activation)**
 
 
-## <a name="supported_fusions"></a> Performance Comparison to Non-Fused Kernels
+![Convolution based fp32 fusion](fp32fusions.png)
+
+
+![Convolution based fp16 fusion](fp16fusions.png)
+
+
+## Performance Comparison to Non-Fused Kernels
 
 
 The following graph depicts the speedup gained for a fused Convolution+Bias+Activation over a non-fused version, all configurations have a batch size of 64:

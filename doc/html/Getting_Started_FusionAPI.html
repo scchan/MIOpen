@@ -37,7 +37,7 @@
         <link rel="search" title="Search" href="search.html"/>
     <link rel="top" title="MIOpen: AMD&#39;s deep learning library" href="index.html"/>
         <link rel="next" title="API Reference" href="apireference.html"/>
-        <link rel="prev" title="Performance Database" href="perfdatabase.html"/> 
+        <link rel="prev" title="Find and Immediate Mode" href="find_and_immediate.html"/> 
 
   
   <script src="_static/js/modernizr.min.js"></script>
@@ -66,7 +66,7 @@
             
             
               <div class="version">
-                1.5.0
+                2.0.1
               </div>
             
           
@@ -93,6 +93,14 @@
               <p class="caption"><span class="caption-text">Contents:</span></p>
 <ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="releasenotes.html">MIOpen Release notes</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="releasenotes.html#">08/13/2019 [ 2.0.1 ]</a></li>
+<li class="toctree-l2"><a class="reference internal" href="releasenotes.html#">07/08/2019 [ 2.0.0 ]</a></li>
+<li class="toctree-l2"><a class="reference internal" href="releasenotes.html#">05/03/2019 [ 1.8.1 ]</a></li>
+<li class="toctree-l2"><a class="reference internal" href="releasenotes.html#">04/11/2019 [ 1.8.0 ]</a></li>
+<li class="toctree-l2"><a class="reference internal" href="releasenotes.html#">02/06/2019 [ 1.7.1 ]</a></li>
+<li class="toctree-l2"><a class="reference internal" href="releasenotes.html#">12/19/2018 [ 1.7.0 ]</a></li>
+<li class="toctree-l2"><a class="reference internal" href="releasenotes.html#">11/18/2018 [ 1.6.0 ]</a></li>
+<li class="toctree-l2"><a class="reference internal" href="releasenotes.html#">09/14/2018 [ 1.5.0 ]</a></li>
 <li class="toctree-l2"><a class="reference internal" href="releasenotes.html#">07/30/2018 [ 1.4.2 ]</a></li>
 <li class="toctree-l2"><a class="reference internal" href="releasenotes.html#">07/19/2018 [ 1.4.1 ]</a></li>
 <li class="toctree-l2"><a class="reference internal" href="releasenotes.html#">07/06/2018 [ 1.4.0 ]</a></li>
@@ -105,15 +113,18 @@
 <li class="toctree-l2"><a class="reference internal" href="releasenotes.html#initial-release">06/30/2017 [ 1.0.0 ] Initial release</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="install.html">MIOpen</a><ul>
+<li class="toctree-l1"><a class="reference internal" href="install.html">Build and Install Instructions</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="install.html#prerequisites">Prerequisites</a></li>
-<li class="toctree-l2"><a class="reference internal" href="install.html#installing-the-dependencies">Installing the dependencies</a></li>
 <li class="toctree-l2"><a class="reference internal" href="install.html#installing-miopen-with-pre-built-packages">Installing MIOpen with pre-built packages</a></li>
-<li class="toctree-l2"><a class="reference internal" href="install.html#building-miopen-from-source">Building MIOpen from source</a></li>
-<li class="toctree-l2"><a class="reference internal" href="install.html#configuring-with-cmake">Configuring with cmake</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="install.html#installing-the-dependencies">Installing the dependencies</a></li>
+<li class="toctree-l2"><a class="reference internal" href="install.html#installing-minimum-dependencies-in-rocm-environment">Installing minimum dependencies in ROCm environment</a></li>
+<li class="toctree-l2"><a class="reference internal" href="install.html#building-miopen-from-source">Building MIOpen from source</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="install.html#configuring-with-cmake">Configuring with cmake</a></li>
 <li class="toctree-l3"><a class="reference internal" href="install.html#for-opencl-run">For OpenCL, run:</a></li>
 <li class="toctree-l3"><a class="reference internal" href="install.html#for-hip-run">For HIP, run:</a></li>
-<li class="toctree-l3"><a class="reference internal" href="install.html#setting-up-locations">Setting up locations</a></li>
+<li class="toctree-l3"><a class="reference internal" href="install.html#setting-up-locations">Setting Up Locations</a></li>
+<li class="toctree-l3"><a class="reference internal" href="install.html#system-performance-database-and-user-database">System Performance Database and User Database</a></li>
+<li class="toctree-l3"><a class="reference internal" href="install.html#persistent-program-cache">Persistent Program Cache</a></li>
 <li class="toctree-l3"><a class="reference internal" href="install.html#changing-the-cmake-configuration">Changing the cmake configuration</a></li>
 </ul>
 </li>
@@ -126,16 +137,46 @@
 <li class="toctree-l2"><a class="reference internal" href="install.html#using-docker">Using docker</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="driver.html">MIOpenDriver</a></li>
+<li class="toctree-l1"><a class="reference internal" href="driver.html">MIOpenDriver</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="driver.html#building-the-driver">Building the Driver</a></li>
+<li class="toctree-l2"><a class="reference internal" href="driver.html#base-arguments">Base Arguments</a></li>
+<li class="toctree-l2"><a class="reference internal" href="driver.html#executing-miopendriver">Executing MIOpenDriver</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="DebugAndLogging.html">Debugging and Logging</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="DebugAndLogging.html#logging">Logging</a></li>
+<li class="toctree-l2"><a class="reference internal" href="DebugAndLogging.html#layer-filtering">Layer Filtering</a></li>
+<li class="toctree-l2"><a class="reference internal" href="DebugAndLogging.html#rocblas-logging-and-behavior">rocBlas Logging and Behavior</a></li>
+</ul>
+</li>
 <li class="toctree-l1"><a class="reference internal" href="cache.html">Kernel Cache</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="cache.html#clear-the-cache">Clear the cache</a></li>
 <li class="toctree-l2"><a class="reference internal" href="cache.html#disabling-the-cache">Disabling the cache</a></li>
+<li class="toctree-l2"><a class="reference internal" href="cache.html#updating-miopen-and-removing-the-cache">Updating MIOpen and removing the cache</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="perfdatabase.html">Performance Database</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="perfdatabase.html#auto-tuning-the-kernels">Auto-tuning the kernels.</a><ul>
 <li class="toctree-l3"><a class="reference internal" href="perfdatabase.html#miopen-find-enforce">MIOPEN_FIND_ENFORCE</a></li>
 <li class="toctree-l3"><a class="reference internal" href="perfdatabase.html#miopen-find-enforce-scope">MIOPEN_FIND_ENFORCE_SCOPE</a></li>
+<li class="toctree-l3"><a class="reference internal" href="perfdatabase.html#updating-miopen-and-the-user-db">Updating MIOpen and the User Db</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="finddb.html">Find-Db Database</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="finddb.html#populating-the-user-find-db">Populating the User Find-Db</a></li>
+<li class="toctree-l2"><a class="reference internal" href="finddb.html#updating-miopen-and-the-user-find-db">Updating MIOpen and the User Find-Db</a></li>
+<li class="toctree-l2"><a class="reference internal" href="finddb.html#disabling-find-db">Disabling Find-Db</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="find_and_immediate.html">Find and Immediate Mode</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="find_and_immediate.html#find-api">Find API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="find_and_immediate.html#immediate-mode-api">Immediate Mode API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="find_and_immediate.html#immediate-mode-fall-back">Immediate Mode Fall Back</a></li>
+<li class="toctree-l2"><a class="reference internal" href="find_and_immediate.html#limitations-of-immediate-mode">Limitations of Immediate Mode</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="find_and_immediate.html#architectual-limitations">Architectual Limitations</a></li>
+<li class="toctree-l3"><a class="reference internal" href="find_and_immediate.html#backend-limitations">Backend Limitations</a></li>
 </ul>
 </li>
 </ul>
@@ -147,15 +188,16 @@
 </li>
 <li class="toctree-l2"><a class="reference internal" href="#create-a-fusion-plan">Create a Fusion Plan</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#create-and-add-operators">Create and add Operators</a></li>
-<li class="toctree-l2"><a class="reference internal" href="#a-name-compile-fusion-a-compile-the-fusion-plan"><a name="compile_fusion"></a>Compile the Fusion Plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#compile-the-fusion-plan">Compile the Fusion Plan</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#set-the-runtime-arguments">Set the runtime arguments</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#execute-a-fusion-plan">Execute a Fusion Plan</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#cleanup">Cleanup</a></li>
-<li class="toctree-l2"><a class="reference internal" href="#a-name-supported-fusions-a-supported-fusions"><a name="supported_fusions"></a> Supported Fusions</a></li>
-<li class="toctree-l2"><a class="reference internal" href="#a-name-supported-fusions-a-performance-comparison-to-non-fused-kernels"><a name="supported_fusions"></a> Performance Comparison to Non-Fused Kernels</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#supported-fusions">Supported Fusions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#performance-comparison-to-non-fused-kernels">Performance Comparison to Non-Fused Kernels</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="apireference.html">API Reference</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="datatypes.html">Datatypes</a></li>
 <li class="toctree-l2"><a class="reference internal" href="handle.html">Handle</a><ul>
 <li class="toctree-l3"><a class="reference internal" href="handle.html#miopenstatus-t">miopenStatus_t</a></li>
 <li class="toctree-l3"><a class="reference internal" href="handle.html#miopencreate">miopenCreate</a></li>
@@ -200,9 +242,14 @@
 <li class="toctree-l3"><a class="reference internal" href="convolution.html#miopenconvalgoperf-t">miopenConvAlgoPerf_t</a></li>
 <li class="toctree-l3"><a class="reference internal" href="convolution.html#miopencreateconvolutiondescriptor">miopenCreateConvolutionDescriptor</a></li>
 <li class="toctree-l3"><a class="reference internal" href="convolution.html#miopeninitconvolutiondescriptor">miopenInitConvolutionDescriptor</a></li>
+<li class="toctree-l3"><a class="reference internal" href="convolution.html#miopeninitconvolutionnddescriptor">miopenInitConvolutionNdDescriptor</a></li>
 <li class="toctree-l3"><a class="reference internal" href="convolution.html#miopengetconvolutiondescriptor">miopenGetConvolutionDescriptor</a></li>
+<li class="toctree-l3"><a class="reference internal" href="convolution.html#miopengetconvolutionnddescriptor">miopenGetConvolutionNdDescriptor</a></li>
 <li class="toctree-l3"><a class="reference internal" href="convolution.html#miopensetconvolutiongroupcount">miopenSetConvolutionGroupCount</a></li>
+<li class="toctree-l3"><a class="reference internal" href="convolution.html#miopensettransposeconvoutputpadding">miopenSetTransposeConvOutputPadding</a></li>
+<li class="toctree-l3"><a class="reference internal" href="convolution.html#miopensettransposeconvndoutputpadding">miopenSetTransposeConvNdOutputPadding</a></li>
 <li class="toctree-l3"><a class="reference internal" href="convolution.html#miopengetconvolutionforwardoutputdim">miopenGetConvolutionForwardOutputDim</a></li>
+<li class="toctree-l3"><a class="reference internal" href="convolution.html#miopengetconvolutionndforwardoutputdim">miopenGetConvolutionNdForwardOutputDim</a></li>
 <li class="toctree-l3"><a class="reference internal" href="convolution.html#miopenconvolutionforwardgetworkspacesize">miopenConvolutionForwardGetWorkSpaceSize</a></li>
 <li class="toctree-l3"><a class="reference internal" href="convolution.html#miopenfindconvolutionforwardalgorithm">miopenFindConvolutionForwardAlgorithm</a></li>
 <li class="toctree-l3"><a class="reference internal" href="convolution.html#miopenconvolutionforward">miopenConvolutionForward</a></li>
@@ -269,19 +316,27 @@
 </li>
 <li class="toctree-l2"><a class="reference internal" href="pooling.html">Pooling Layer</a><ul>
 <li class="toctree-l3"><a class="reference internal" href="pooling.html#miopenpoolingmode-t">miopenPoolingMode_t</a></li>
+<li class="toctree-l3"><a class="reference internal" href="pooling.html#miopenindextype-t">miopenIndexType_t</a></li>
 <li class="toctree-l3"><a class="reference internal" href="pooling.html#miopencreatepoolingdescriptor">miopenCreatePoolingDescriptor</a></li>
 <li class="toctree-l3"><a class="reference internal" href="pooling.html#miopenset2dpoolingdescriptor">miopenSet2dPoolingDescriptor</a></li>
+<li class="toctree-l3"><a class="reference internal" href="pooling.html#miopensetpoolingindextype">miopenSetPoolingIndexType</a></li>
+<li class="toctree-l3"><a class="reference internal" href="pooling.html#miopengetpoolingindextype">miopenGetPoolingIndexType</a></li>
 <li class="toctree-l3"><a class="reference internal" href="pooling.html#miopenget2dpoolingdescriptor">miopenGet2dPoolingDescriptor</a></li>
 <li class="toctree-l3"><a class="reference internal" href="pooling.html#miopengetpoolingforwardoutputdim">miopenGetPoolingForwardOutputDim</a></li>
 <li class="toctree-l3"><a class="reference internal" href="pooling.html#miopenpoolinggetworkspacesize">miopenPoolingGetWorkSpaceSize</a></li>
+<li class="toctree-l3"><a class="reference internal" href="pooling.html#miopenpoolinggetworkspacesizev2">miopenPoolingGetWorkSpaceSizeV2</a></li>
 <li class="toctree-l3"><a class="reference internal" href="pooling.html#miopenpoolingforward">miopenPoolingForward</a></li>
 <li class="toctree-l3"><a class="reference internal" href="pooling.html#miopenpoolingbackward">miopenPoolingBackward</a></li>
 <li class="toctree-l3"><a class="reference internal" href="pooling.html#miopendestroypoolingdescriptor">miopenDestroyPoolingDescriptor</a></li>
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="softmax.html">Softmax Layer</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="softmax.html#miopensoftmaxalgorithm-t">miopenSoftmaxAlgorithm_t</a></li>
+<li class="toctree-l3"><a class="reference internal" href="softmax.html#miopensoftmaxmode-t">miopenSoftmaxMode_t</a></li>
 <li class="toctree-l3"><a class="reference internal" href="softmax.html#miopensoftmaxforward">miopenSoftmaxForward</a></li>
 <li class="toctree-l3"><a class="reference internal" href="softmax.html#miopensoftmaxbackward">miopenSoftmaxBackward</a></li>
+<li class="toctree-l3"><a class="reference internal" href="softmax.html#miopensoftmaxforward-v2">miopenSoftmaxForward_V2</a></li>
+<li class="toctree-l3"><a class="reference internal" href="softmax.html#miopensoftmaxbackward-v2">miopenSoftmaxBackward_V2</a></li>
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="fusion.html">Layer Fusion</a><ul>
@@ -302,6 +357,16 @@
 <li class="toctree-l3"><a class="reference internal" href="fusion.html#miopensetopargsbatchnorminference">miopenSetOpArgsBatchNormInference</a></li>
 <li class="toctree-l3"><a class="reference internal" href="fusion.html#miopensetopargsbiasforward">miopenSetOpArgsBiasForward</a></li>
 <li class="toctree-l3"><a class="reference internal" href="fusion.html#miopenexecutefusionplan">miopenExecuteFusionPlan</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="loss.html">Loss Function Layer</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="loss.html#miopenctclossalgo-t">miopenCTCLossAlgo_t</a></li>
+<li class="toctree-l3"><a class="reference internal" href="loss.html#miopencreatectclossdescriptor">miopenCreateCTCLossDescriptor</a></li>
+<li class="toctree-l3"><a class="reference internal" href="loss.html#miopengetctclossdescriptor">miopenGetCTCLossDescriptor</a></li>
+<li class="toctree-l3"><a class="reference internal" href="loss.html#miopendestroyctclossdescriptor">miopenDestroyCTCLossDescriptor</a></li>
+<li class="toctree-l3"><a class="reference internal" href="loss.html#miopensetctclossdescriptor">miopenSetCTCLossDescriptor</a></li>
+<li class="toctree-l3"><a class="reference internal" href="loss.html#miopengetctclossworkspacesize">miopenGetCTCLossWorkspaceSize</a></li>
+<li class="toctree-l3"><a class="reference internal" href="loss.html#miopenctcloss">miopenCTCLoss</a></li>
 </ul>
 </li>
 </ul>
@@ -443,8 +508,8 @@
 <p>It may be noted that <code class="docutils literal notranslate"><span class="pre">conv_desc</span></code> is the regular MIOpen Convolution descriptor and is created in the standard way before it is referenced here. For more details on creating and setting the convolution descriptor please refer to the example code as well as the <a class="reference external" href="https://rocmsoftwareplatform.github.io/MIOpen/doc/html/convolution.html">MIOpen documentation</a>. In the above snippet <code class="docutils literal notranslate"><span class="pre">weights.desc</span></code> refers to the <code class="docutils literal notranslate"><span class="pre">miopenTensorDescriptor_t</span></code> for the convolution operations and <code class="docutils literal notranslate"><span class="pre">bias.desc</span></code> refers to the object of the same type for the bias operation. The order of insertion of operators indicates the order in which the operations would be performed on the data. Therefore, the above code implies that the convolution operation would be the first operation to execute on the incoming data, followed by the bias and activation operations.</p>
 <p>During this process, it is important that the returned codes be checked to make sure that the operations as well as their order is supported. The operator insertion might fail for a number of reasons such as unsupported sequence of operations, unsupported dimensions of the input or in case of convolution unsupported dimensions for the filters. In the above example, these aspects are ignored for the sake of simplicity.</p>
 </div>
-<div class="section" id="a-name-compile-fusion-a-compile-the-fusion-plan">
-<span id="a-name-compile-fusion-a-compile-the-fusion-plan"></span><h2><a name="compile_fusion"></a>Compile the Fusion Plan<a class="headerlink" href="#a-name-compile-fusion-a-compile-the-fusion-plan" title="Permalink to this headline">¶</a></h2>
+<div class="section" id="compile-the-fusion-plan">
+<span id="compile-the-fusion-plan"></span><h2>Compile the Fusion Plan<a class="headerlink" href="#compile-the-fusion-plan" title="Permalink to this headline">¶</a></h2>
 <p>Following the operator addition, the user would compile the fusion plan, to populate the MIOpen kernel cache with the fused kernel and make it ready for execution. The API call that accomplishes this is:</p>
 <div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="n">miopenStatus_t</span>
 <span class="nf">miopenCompileFusionPlan</span><span class="p">(</span><span class="n">miopenHandle_t</span> <span class="n">handle</span><span class="p">,</span> <span class="n">miopenFusionPlanDescriptor_t</span> <span class="n">fusePlanDesc</span><span class="p">);</span>
@@ -525,65 +590,18 @@
 <span id="cleanup"></span><h2>Cleanup<a class="headerlink" href="#cleanup" title="Permalink to this headline">¶</a></h2>
 <p>Once the application is done with the fusion plan, the fusion plan and the fusion args objects may be destroyed using the API calls:</p>
 <div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="n">miopenStatus_t</span> <span class="nf">miopenDestroyFusionPlan</span><span class="p">(</span><span class="n">miopenFusionPlanDescriptor_t</span> <span class="n">fusePlanDesc</span><span class="p">);</span>
-
-<span class="n">miopenStatus_t</span> <span class="nf">miopenDestroyFusionPlan</span><span class="p">(</span><span class="n">miopenFusionPlanDescriptor_t</span> <span class="n">fusePlanDesc</span><span class="p">);</span>
 </pre></div>
 </div>
 <p>Once the fusion plan object is destroyed, all the operations created are destroyed automatically and do not need any special cleanup.</p>
 </div>
-<div class="section" id="a-name-supported-fusions-a-supported-fusions">
-<span id="a-name-supported-fusions-a-supported-fusions"></span><h2><a name="supported_fusions"></a> Supported Fusions<a class="headerlink" href="#a-name-supported-fusions-a-supported-fusions" title="Permalink to this headline">¶</a></h2>
-<p>The table below outlines the supported fusions as well as any applicable constraints. Currently, only convolutions with unit stride and unit dilation are supported. Currently, the fusion API is in the initial phases of development and may change.</p>
-<table border=0 cellpadding=0 cellspacing=0 width=713 style='border-collapse:
- collapse;table-layout:fixed;width:534pt'>
- <col width=108 style='mso-width-source:userset;mso-width-alt:3456;width:81pt'>
- <col width=87 style='width:65pt'>
- <col width=221 style='mso-width-source:userset;mso-width-alt:7082;width:166pt'>
- <col width=87 style='width:65pt'>
- <col width=123 style='mso-width-source:userset;mso-width-alt:3925;width:92pt'>
- <col width=87 style='width:65pt'>
- <tr height=45 style='height:34.0pt'>
-  <td height=45 class=xl65 width=108 style='height:34.0pt;width:81pt'>Combination</td>
-  <td class=xl65 width=87 style='width:65pt'>Conv Algo</td>
-  <td class=xl65 width=221 style='width:166pt'>Filter Dims</td>
-  <td class=xl65 width=87 style='width:65pt'>BN Mode</td>
-  <td class=xl65 width=123 style='width:92pt'>Activations</td>
-  <td class=xl65 width=87 style='width:65pt'>Other Constraints</td>
- </tr>
- <tr height=45 style='height:34.0pt'>
-  <td height=45 class=xl66 width=108 style='height:34.0pt;width:81pt'>CBNA</td>
-  <td class=xl66 width=87 style='width:65pt'>Direct</td>
-  <td class=xl66 width=221 style='width:166pt'>1x1, 3x3, 5x5, 7x7, 9x9, 11x11</td>
-  <td class=xl66 width=87 style='width:65pt'>All</td>
-  <td class=xl66 width=123 style='width:92pt'>All</td>
-  <td class=xl66 width=87 style='width:65pt'>Padding not supported</td>
- </tr>
- <tr height=23 style='height:17.0pt'>
-  <td rowspan=2 height=46 class=xl67 width=108 style='height:34.0pt;width:81pt'>CBA</td>
-  <td class=xl66 width=87 style='width:65pt'>Direct</td>
-  <td class=xl66 width=221 style='width:166pt'>1x1, 3x3, 5x5, 7x7, 9x9, 11x11</td>
-  <td class=xl66 width=87 style='width:65pt'></td>
-  <td class=xl66 width=123 style='width:92pt'>All</td>
-  <td class=xl66 width=87 style='width:65pt'></td>
- </tr>
- <tr height=23 style='height:17.0pt'>
-  <td height=23 class=xl66 width=87 style='height:17.0pt;width:65pt'>Winograd</td>
-  <td class=xl66 width=221 style='width:166pt'>3x3</td>
-  <td class=xl66 width=87 style='width:65pt'>N/A</td>
-  <td class=xl66 width=123 style='width:92pt'>Relu, Leaky Relu</td>
-  <td class=xl66 width=87 style='width:65pt'>c &gt;= 18</td>
- </tr>
- <tr height=45 style='height:34.0pt'>
-  <td height=45 class=xl66 width=108 style='height:34.0pt;width:81pt'>NA</td>
-  <td class=xl66 width=87 style='width:65pt'>-</td>
-  <td class=xl66 width=221 style='width:166pt'>-</td>
-  <td class=xl66 width=87 style='width:65pt'>All</td>
-  <td class=xl66 width=123 style='width:92pt'>All</td>
-  <td class=xl66 width=87 style='width:65pt'>Padding not supported</td>
- </tr>
-</table></div>
-<div class="section" id="a-name-supported-fusions-a-performance-comparison-to-non-fused-kernels">
-<span id="a-name-supported-fusions-a-performance-comparison-to-non-fused-kernels"></span><h2><a name="supported_fusions"></a> Performance Comparison to Non-Fused Kernels<a class="headerlink" href="#a-name-supported-fusions-a-performance-comparison-to-non-fused-kernels" title="Permalink to this headline">¶</a></h2>
+<div class="section" id="supported-fusions">
+<span id="supported-fusions"></span><h2>Supported Fusions<a class="headerlink" href="#supported-fusions" title="Permalink to this headline">¶</a></h2>
+<p>The tables below outlines the supported fusions for fp32 and fp16 as well as any applicable constraints. <strong>(C = convolution, B = bias, N = batch normalization, A = activation)</strong></p>
+<p><img alt="Convolution based fp32 fusion" src="_images/fp32fusions.png" /></p>
+<p><img alt="Convolution based fp16 fusion" src="_images/fp16fusions.png" /></p>
+</div>
+<div class="section" id="performance-comparison-to-non-fused-kernels">
+<span id="performance-comparison-to-non-fused-kernels"></span><h2>Performance Comparison to Non-Fused Kernels<a class="headerlink" href="#performance-comparison-to-non-fused-kernels" title="Permalink to this headline">¶</a></h2>
 <p>The following graph depicts the speedup gained for a fused Convolution+Bias+Activation over a non-fused version, all configurations have a batch size of 64:</p>
 <p><img alt="CBA Graph" src="_images/cba.png" /></p>
 <p>Speedup obtained by fusing Batchnorm (spatial mode) with Activation are presented in the graph below:</p>
@@ -604,7 +622,7 @@
         <a href="apireference.html" class="btn btn-neutral float-right" title="API Reference" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right"></span></a>
       
       
-        <a href="perfdatabase.html" class="btn btn-neutral" title="Performance Database" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left"></span> Previous</a>
+        <a href="find_and_immediate.html" class="btn btn-neutral" title="Find and Immediate Mode" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left"></span> Previous</a>
       
     </div>
   
@@ -635,7 +653,7 @@
     <script type="text/javascript">
         var DOCUMENTATION_OPTIONS = {
             URL_ROOT:'./',
-            VERSION:'1.5.0',
+            VERSION:'2.0.1',
             COLLAPSE_INDEX:false,
             FILE_SUFFIX:'.html',
             HAS_SOURCE:  true,
