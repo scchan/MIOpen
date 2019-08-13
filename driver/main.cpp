@@ -36,6 +36,7 @@
 #include "pool_driver.hpp"
 #include "softmax_driver.hpp"
 #include "rnn_driver.hpp"
+#include "ctc_driver.hpp"
 #include "miopen/config.h"
 
 int main(int argc, char* argv[])
@@ -51,19 +52,25 @@ int main(int argc, char* argv[])
     Driver* drv;
     if(base_arg == "conv")
     {
-        // Maintain compatibility with legacy verification cache files (computed in doubles, stored
-        // as floats).
-        drv = new ConvDriver<float, double, float>();
+        drv = new ConvDriver<float, float>();
     }
     else if(base_arg == "convfp16")
     {
-        drv = new ConvDriver<float16, double>();
+        drv = new ConvDriver<float16, float>();
+    }
+    else if(base_arg == "convbfp16")
+    {
+        drv = new ConvDriver<bfloat16, float>();
+    }
+    else if(base_arg == "convint8")
+    {
+        drv = new ConvDriver<int8_t, float>();
     }
     else if(base_arg == "CBAInfer")
     {
         drv = new CBAInferFusionDriver<float, double>();
     }
-    else if(base_arg == "CBAInfer16")
+    else if(base_arg == "CBAInferfp16")
     {
         drv = new CBAInferFusionDriver<float16, double>();
     }
@@ -116,11 +123,19 @@ int main(int argc, char* argv[])
     }
     else if(base_arg == "bnormfp16")
     {
-        drv = new BatchNormDriver<float16, double>();
+        drv = new BatchNormDriver<float16, double, float>();
     }
     else if(base_arg == "rnn")
     {
-        drv = new RNNDriver<float>();
+        drv = new RNNDriver<float, double>();
+    }
+    else if(base_arg == "rnnfp16")
+    {
+        drv = new RNNDriver<float16, double>();
+    }
+    else if(base_arg == "ctc")
+    {
+        drv = new CTCDriver<float>();
     }
     else
     {
@@ -129,37 +144,46 @@ int main(int argc, char* argv[])
     }
 
     drv->AddCmdLineArgs();
-    drv->ParseCmdLineArgs(argc, argv);
-    drv->GetandSetData();
-    drv->AllocateBuffersAndCopy();
-
-    int fargval = ((base_arg != "CBAInfer") && (base_arg != "CBAInfer16"))
-                      ? drv->GetInputFlags().GetValueInt("forw")
-                      : 1;
-    bool bnFwdInVer = (fargval == 2 && (base_arg == "bnorm"));
-    bool verifyarg  = (drv->GetInputFlags().GetValueInt("verify") == 1);
-
-    if((fargval != 2) || bnFwdInVer)
+    int rc = drv->ParseCmdLineArgs(argc, argv);
+    if(rc != 0)
     {
-        drv->RunForwardGPU();
+        std::cout << "ParseCmdLineArgs() failed, rc = " << rc << std::endl;
+        return rc;
+    }
+    drv->GetandSetData();
+    rc = drv->AllocateBuffersAndCopy();
+    if(rc != 0)
+    {
+        std::cout << "AllocateBuffersAndCopy() failed, rc = " << rc << std::endl;
+        return rc;
     }
 
-    if(verifyarg)
+    int fargval = ((base_arg != "CBAInfer") && (base_arg != "CBAInferfp16"))
+                      ? drv->GetInputFlags().GetValueInt("forw")
+                      : 1;
+    bool bnFwdInVer   = (fargval == 2 && (base_arg == "bnorm"));
+    bool verifyarg    = (drv->GetInputFlags().GetValueInt("verify") == 1);
+    int cumulative_rc = 0; // Do not stop running tests in case of errors.
+
+    if(fargval & 1 || fargval == 0 || bnFwdInVer)
     {
-        if(fargval != 2 || bnFwdInVer)
-        {
-            drv->VerifyForward();
-        }
+        rc = drv->RunForwardGPU();
+        cumulative_rc |= rc;
+        if(rc != 0)
+            std::cout << "RunForwardGPU() failed, rc = " << rc << std::endl;
+        if(verifyarg) // Verify even if Run() failed.
+            cumulative_rc |= drv->VerifyForward();
     }
 
     if(fargval != 1)
     {
-        drv->RunBackwardGPU();
-        if(verifyarg)
-        {
-            drv->VerifyBackward();
-        }
+        rc = drv->RunBackwardGPU();
+        cumulative_rc |= rc;
+        if(rc != 0)
+            std::cout << "RunBackwardGPU() failed, rc = " << rc << std::endl;
+        if(verifyarg) // Verify even if Run() failed.
+            cumulative_rc |= drv->VerifyBackward();
     }
 
-    return 0;
+    return cumulative_rc;
 }

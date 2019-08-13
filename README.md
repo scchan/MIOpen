@@ -1,6 +1,9 @@
 # MIOpen
 
-AMD's library for high peformance machine learning primitives. MIOpen supports two programming models - 
+AMD's library for high performance machine learning primitives. 
+Sources and binaries can be found at [MIOpen's GitHub site](https://github.com/ROCmSoftwarePlatform/MIOpen).
+
+MIOpen supports two programming models - 
 1. OpenCL 
 2. [HIP](https://github.com/ROCm-Developer-Tools/HIP)
 
@@ -14,9 +17,21 @@ AMD's library for high peformance machine learning primitives. MIOpen supports t
 * [MIOpenGEMM](https://github.com/ROCmSoftwarePlatform/MIOpenGEMM) to enable various functionalities including transposed and dilated convolutions
 * ROCm cmake modules can be installed from [here](https://github.com/RadeonOpenCompute/rocm-cmake)
 * [Half](http://half.sourceforge.net/) - IEEE 754-based half-precision floating point library
-* [OpenSSL](https://www.openssl.org/) or [libressl](https://www.libressl.org/)
 * [Boost](http://www.boost.org/) at least version 1.58
-  * MIOpen uses `boost-system` and `boost-filesystem` packages to enable persistent [kernel cache](https://github.com/ROCmSoftwarePlatform/MIOpen/blob/master/doc/src/cache.md)
+  * MIOpen uses `boost-system` and `boost-filesystem` packages to enable persistent [kernel cache](https://rocmsoftwareplatform.github.io/MIOpen/doc/html/cache.html)
+* [rocBlas](https://github.com/ROCmSoftwarePlatform/rocBLAS) Minimum version branch [master-rocm-2.6](https://github.com/ROCmSoftwarePlatform/rocBLAS/tree/master-rocm-2.6)
+
+
+## Installing MIOpen with pre-built packages
+
+MIOpen can be installed on Ubuntu using `apt-get`.
+
+For OpenCL backend: `apt-get install miopen-opencl`
+
+For HIP backend: `apt-get install miopen-hip`
+
+Currently both the backends cannot be installed on the same system simultaneously. If a different backend other than what currently exists on the system is desired, please uninstall the existing backend completely and then install the new backend.
+
 
 ## Installing the dependencies
 
@@ -27,22 +42,25 @@ This will install by default to `/usr/local` but it can be installed in another 
 ```
 cmake -P install_deps.cmake --prefix /some/local/dir
 ```
+This prefix can used to specify the dependency path during the configuration phase using the `CMAKE_PREFIX_PATH`.
 
-Instructions to manually install all the dependencies on Ubuntu v16 are present in this [section](#installing-the-dependencies-manually).
+MIOpen's HIP backend uses [rocBlas](https://github.com/ROCmSoftwarePlatform/rocBLAS) by default. Users can install rocBlas minimum release by using `apt-get install rocblas`. To disable using rocBlas set the configuration flag `-DMIOPEN_USE_ROCBLAS=Off`. rocBlas is *not* available for the OpenCL backend.
 
-## Installing MIOpen with pre-built packages
 
-MIOpen can be installed on Ubuntu using `apt-get`.
+## Installing minimum dependencies in ROCm environment
 
-For OpenCL backend: `apt-get install miopen-opencl`
+Users who are working in a fully installed and up to date ROCm environment may not wish to additionally install rocm-cmake, clang-ocl, MIOpenGEMM, or rocBLAS. This can be done by simply inserting the command `--minimum` into the cmake command as shown below:
 
-For HIP backend: `apt-get install miopen-hip`
+```
+cmake -P install_deps.cmake --minimum --prefix /some/local/dir
+```
 
-Currently both the backends cannot be installed on the same system simultaneously. If a different backend other than what currently exists on the system is desired, please remove the existing backend completely and then install the new backend.
+This will build the Boost and half libraries.
+
 
 ## Building MIOpen from source
 
-## Configuring with cmake
+### Configuring with cmake
 
 First create a build directory:
 
@@ -52,7 +70,7 @@ mkdir build; cd build;
 
 Next configure cmake. The preferred backend for MIOpen can be set using the `-DMIOPEN_BACKEND` cmake variable. 
 
-#### For OpenCL, run:
+### For OpenCL, run:
 
 ```
 cmake -DMIOPEN_BACKEND=OpenCL ..
@@ -64,23 +82,24 @@ The above assumes that OpenCL is installed in one of the standard locations. If 
 cmake -DMIOPEN_BACKEND=OpenCL -DOPENCL_LIBRARIES=<opencl-library-path> -DOPENCL_INCLUDE_DIRS=<opencl-headers-path> ..
 ```
 
-#### For HIP, run:
+And an example setting the dependency path:
+```
+cmake -DMIOPEN_BACKEND=OpenCL -DCMAKE_PREFIX_PATH=/some/local/dir ..
+```
+
+### For HIP, run:
 
 Set the C++ compiler to `hcc`.
 ```
+export CXX=<location-of-hcc-compiler>
 cmake -DMIOPEN_BACKEND=HIP -DCMAKE_PREFIX_PATH="<hip-installed-path>;<hcc-installed-path>;<clang-ocl-installed-path>" ..
 ```
 An example cmake step can be:
-* `OpenSSL` installed using `apt-get` on Ubuntu v16? **Yes**.
-```
-CXX=/opt/rocm/hcc/bin/hcc cmake -DMIOPEN_BACKEND=HIP -DCMAKE_PREFIX_PATH="/opt/rocm/hcc;/opt/rocm/hip" -DCMAKE_CXX_FLAGS="-isystem /usr/include/x86_64-linux-gnu/" ..
-```
-* `OpenSSL` installed using `apt-get` on Ubuntu v16? **No**.
 ```
 CXX=/opt/rocm/hcc/bin/hcc cmake -DMIOPEN_BACKEND=HIP -DCMAKE_PREFIX_PATH="/opt/rocm/hcc;/opt/rocm/hip" ..
 ```
 
-#### Setting up locations
+### Setting Up Locations
 
 By default the install location is set to '/opt/rocm', this can be set by using `CMAKE_INSTALL_PREFIX`:
 
@@ -88,15 +107,31 @@ By default the install location is set to '/opt/rocm', this can be set by using 
 cmake -DMIOPEN_BACKEND=OpenCL -DCMAKE_INSTALL_PREFIX=<miopen-installed-path> ..
 ```
 
+### System Performance Database and User Database
+
 The default path to the System PerfDb is `miopen/share/miopen/db/` within install location. The default path to the User PerfDb is `~/.config/miopen/`. For development purposes, setting `BUILD_DEV` will change default path to both database files to the source directory:
 
 ```
 cmake -DMIOPEN_BACKEND=OpenCL -DBUILD_DEV=On ..
 ```
 
-Database paths can be explicitly customized by means of `MIOPEN_DB_PATH` (System PerfDb) and `MIOPEN_USER_DB_PATH` (User PerfDb) cmake variables.
+Database paths can be explicitly customized by means of `MIOPEN_SYSTEM_DB_PATH` (System PerfDb) and `MIOPEN_USER_DB_PATH` (User PerfDb) cmake variables.
 
-#### Changing the cmake configuration
+If the user installs a new version of MIOpen, it is recommended that the user move, or delete their old user database file. The user can find the file with the suffix `*.updb.txt` in the user perf db path. 
+
+More information about the performance database can be found [here](https://rocmsoftwareplatform.github.io/MIOpen/doc/html/perfdatabase.html).
+
+
+### Persistent Program Cache
+
+MIOpen by default caches the device programs in the location `~/.cache/miopen/`. In the cache directory there exists a directory for each version of MIOpen. Users change the location of the cache directory during configuration using the flag `-DMIOPEN_CACHE_DIR=<cache-directory-path>`. 
+
+Users can also disable the cache during runtime using the environmental variable set as `MIOPEN_DISABLE_CACHE=1`. 
+
+If the compiler changes, or the user modifies the kernels then the cache must be deleted for the MIOpen version in use; e.g., `rm -rf ~/.cache/miopen/<miopen-version-number>`. More information about the cache can be found [here](https://rocmsoftwareplatform.github.io/MIOpen/doc/html/cache.html).
+
+
+### Changing the cmake configuration
 
 The configuration can be changed after running cmake by using `ccmake`:
 
@@ -124,7 +159,7 @@ The driver can be built using the `MIOpenDriver` target:
 
 ` cmake --build . --config Release --target MIOpenDriver ` **OR** ` make MIOpenDriver `
 
-Documentation on how to run the driver is [here](https://github.com/ROCmSoftwarePlatform/MIOpen/blob/master/driver/README.md). 
+Documentation on how to run the driver is [here](https://rocmsoftwareplatform.github.io/MIOpen/doc/html/driver.html). 
 
 ## Running the tests
 
@@ -153,7 +188,10 @@ HTML and PDFs are generated using [Sphinx](http://www.sphinx-doc.org/en/stable/i
 
 Requirements for both Sphinx, Breathe, and the ReadTheDocs theme can be filled for these in the MIOpen/doc folder:
 
-`pip install -r ./requirements.txt`
+```
+pip install -r ./requirements.txt
+```
+
 
 Depending on your setup `sudo` may be required for the pip install.
 
@@ -173,22 +211,32 @@ Also, githooks can be installed to format the code per-commit:
 
 ## Installing the dependencies manually
 
-If Ubuntu v16 is used then the `OpenSSL` and `Boost` packages can also be installed by:
+If Ubuntu v16 is used then the `Boost` packages can also be installed by:
 ```
-sudo apt-get install libssl-dev
 sudo apt-get install libboost-dev
 sudo apt-get install libboost-system-dev
 sudo apt-get install libboost-filesystem-dev
 ```
 
-`half` header needs to be installed from [here](http://half.sourceforge.net/). 
+*Note:* MIOpen by default will attempt to build with Boost statically linked libraries. If it is needed, the user can build with dynamically linked Boost libraries by using this flag during the configruation stage:
+```
+-DBoost_USE_STATIC_LIBS=Off
+```
+however, this is not recommended.
+
+The `half` header needs to be installed from [here](http://half.sourceforge.net/). 
+
 
 ## Using docker
 
 The easiest way is to use docker. You can build the top-level docker file:
+```
+docker build -t miopen .
+```
 
-    docker build -t miopen .
+Then to enter the development environment use `docker run`:
+```
+docker run --device='/dev/kfd' --device='/dev/dri' -v=`pwd`:/data -w /data --group-add video -it miopen
+```
 
-Then to enter the developement environment use `docker run`:
 
-    docker run --device='/dev/kfd' --device='/dev/dri' -v=`pwd`:/data -w /data --group-add video -it miopen

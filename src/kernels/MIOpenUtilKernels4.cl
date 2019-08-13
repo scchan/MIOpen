@@ -24,11 +24,70 @@
  *
  */
 
-inline uint iMod(uint v, uint u, uint d)
-{
-    uint r = v - mul24(u, d);
-    return (r);
-}
+#ifndef MIOPEN_USE_FP32
+#define MIOPEN_USE_FP32 0
+#endif
+
+#ifndef MIOPEN_USE_FP16
+#define MIOPEN_USE_FP16 0
+#endif
+
+#ifndef MIOPEN_USE_BFP16
+#define MIOPEN_USE_BFP16 0
+#endif
+
+#ifndef MIOPEN_USE_INT8
+#define MIOPEN_USE_INT8 0
+#endif
+
+#ifndef MIOPEN_USE_INT8x4
+#define MIOPEN_USE_INT8x4 0
+#endif
+
+#ifndef MIOPEN_USE_INT32
+#define MIOPEN_USE_INT32 0
+#endif
+
+#if MIOPEN_USE_INT8
+typedef char data_t;
+#elif MIOPEN_USE_INT8x4
+typedef uint data_t;
+#elif MIOPEN_USE_INT32
+typedef int data_t;
+#elif(MIOPEN_USE_FP16 || MIOPEN_USE_BFP16)
+// As the half type degrades the performance, use short instead of half in
+// transpose kernels, which have no match op. May change back to half when
+// compile can deliver equal performance as short
+typedef short data_t;
+#elif MIOPEN_USE_FP32
+typedef float data_t;
+#endif
+
+#include "math_ops.h"
+
+#ifndef NC_TRANS_NCHW_OPT
+#define NC_TRANS_NCHW_OPT 0
+#endif
+
+#ifndef NC_TRANS_CNHW_OPT
+#define NC_TRANS_CNHW_OPT 0
+#endif
+
+#ifndef NC_TRANS_NCHW
+#define NC_TRANS_NCHW 0
+#endif
+
+#ifndef NC_TRANS_CNHW
+#define NC_TRANS_CNHW 0
+#endif
+
+#ifndef NC_TRANS_MN2NM
+#define NC_TRANS_MN2NM 0
+#endif
+
+#ifndef IS_2D_WG
+#define IS_2D_WG 0
+#endif
 
 // N - batch size
 // C - # of maps
@@ -43,12 +102,12 @@ inline uint iMod(uint v, uint u, uint d)
 // local size = (lcl size0, 1, 1)
 // global size = (MAP_RD, N, 1)
 
-#ifdef NC_TRANS_NCHW_OPT
-__kernel void transpose_NCHW2CNHW_opt(const global float* in, global float* out)
+#if NC_TRANS_NCHW_OPT
+__kernel void transpose_NCHW2CNHW_opt(const global data_t* in, global data_t* out)
 {
     // to reduce granularity loss
     uint c_p_blck = get_global_id(0);
-    uint c        = c_p_blck / HW_RD;
+    uint c        = iDiv(c_p_blck, HW_RD);
     uint p_blck   = iMod(c_p_blck, c, HW_RD);
 
     uint in_off                 = c_p_blck * RD_BLCK + IN_OFF;
@@ -57,7 +116,7 @@ __kernel void transpose_NCHW2CNHW_opt(const global float* in, global float* out)
     global READ_TYPE* cout      = (global READ_TYPE*)(out + out_off);
 
     int b;
-#ifdef _2D_WG
+#if IS_2D_WG
     b               = get_global_id(1);
     cout[b * HW_RD] = cin[b * C * HW_RD];
 #else
@@ -69,12 +128,12 @@ __kernel void transpose_NCHW2CNHW_opt(const global float* in, global float* out)
 }
 #endif
 
-#ifdef NC_TRANS_CNHW_OPT
-__kernel void transpose_CNHW2NCHW_opt(const global float* in, global float* out)
+#if NC_TRANS_CNHW_OPT
+__kernel void transpose_CNHW2NCHW_opt(const global data_t* in, global data_t* out)
 {
     // to reduce granularity loss
     uint c_p_blck = get_global_id(0);
-    uint c        = c_p_blck / HW_RD;
+    uint c        = iDiv(c_p_blck, HW_RD);
     uint p_blck   = iMod(c_p_blck, c, HW_RD);
 
     uint in_off                 = c * N * H * W + p_blck * RD_BLCK + IN_OFF;
@@ -83,7 +142,7 @@ __kernel void transpose_CNHW2NCHW_opt(const global float* in, global float* out)
     global READ_TYPE* cout      = (global READ_TYPE*)(out + out_off);
 
     int b;
-#ifdef _2D_WG
+#if IS_2D_WG
     b                   = get_global_id(1);
     cout[b * C * HW_RD] = cin[b * HW_RD];
 #else
@@ -95,23 +154,23 @@ __kernel void transpose_CNHW2NCHW_opt(const global float* in, global float* out)
 }
 #endif
 
-#ifdef NC_TRANS_NCHW
-__kernel void transpose_NCHW2CNHW(const global float* in, global float* out)
+#if NC_TRANS_NCHW
+__kernel void transpose_NCHW2CNHW(const global data_t* in, global data_t* out)
 {
     uint i = get_global_id(0);
 
-    uint hw_i = i % HW_OUT;
-    uint h_i  = hw_i / W_OUT;
-    uint w_i  = hw_i % W_OUT;
-    uint c_i  = i / HW_OUT;
+    uint c_i  = iDiv(i, HW_OUT);
+    uint hw_i = iMod(i, c_i, HW_OUT);
+    uint h_i  = iDiv(hw_i, W_OUT);
+    uint w_i  = iMod(hw_i, h_i, W_OUT);
 
-    uint in_off             = c_i * HW_IN + h_i * H_STRIDE * W_IN + w_i * W_STRIDE + IN_OFF;
-    uint out_off            = c_i * N * HW_OUT + hw_i + OUT_OFF;
-    const global float* cin = (const global float*)(in + in_off);
-    global float* cout      = (global float*)(out + out_off);
+    uint in_off              = c_i * HW_IN + h_i * H_STRIDE * W_IN + w_i * W_STRIDE + IN_OFF;
+    uint out_off             = c_i * N * HW_OUT + hw_i + OUT_OFF;
+    const global data_t* cin = (const global data_t*)(in + in_off);
+    global data_t* cout      = (global data_t*)(out + out_off);
 
     uint n_i;
-#ifdef _2D_WG
+#if IS_2D_WG
     n_i                = get_global_id(1);
     cout[HW_OUT * n_i] = cin[C * HW_IN * n_i];
 #else
@@ -121,23 +180,23 @@ __kernel void transpose_NCHW2CNHW(const global float* in, global float* out)
 }
 #endif
 
-#ifdef NC_TRANS_CNHW
-__kernel void transpose_CNHW2NCHW(const global float* in, global float* out)
+#if NC_TRANS_CNHW
+__kernel void transpose_CNHW2NCHW(const global data_t* in, global data_t* out)
 {
     uint i = get_global_id(0);
 
-    uint hw_i = i % HW_OUT;
-    uint h_i  = hw_i / W_OUT;
-    uint w_i  = hw_i % W_OUT;
-    uint c_i  = i / HW_OUT;
+    uint c_i  = iDiv(i, HW_OUT);
+    uint hw_i = iMod(i, c_i, HW_OUT);
+    uint h_i  = iDiv(hw_i, W_OUT);
+    uint w_i  = iMod(hw_i, h_i, W_OUT);
 
-    uint in_off             = c_i * N * HW_OUT + hw_i + IN_OFF;
-    uint out_off            = c_i * HW_IN + h_i * H_STRIDE * W_IN + w_i * W_STRIDE + OUT_OFF;
-    const global float* cin = (const global float*)(in + in_off);
-    global float* cout      = (global float*)(out + out_off);
+    uint in_off              = c_i * N * HW_OUT + hw_i + IN_OFF;
+    uint out_off             = c_i * HW_IN + h_i * H_STRIDE * W_IN + w_i * W_STRIDE + OUT_OFF;
+    const global data_t* cin = (const global data_t*)(in + in_off);
+    global data_t* cout      = (global data_t*)(out + out_off);
 
     uint n_i;
-#ifdef _2D_WG
+#if IS_2D_WG
     n_i                   = get_global_id(1);
     cout[C * HW_IN * n_i] = cin[HW_OUT * n_i];
 #else
@@ -146,5 +205,26 @@ __kernel void transpose_CNHW2NCHW(const global float* in, global float* out)
         cout[C * HW_IN * n_i] = cin[HW_OUT * n_i];
     }
 #endif
+}
+#endif
+
+#if NC_TRANS_MN2NM
+__kernel void transpose_packed_MN2NM(const global data_t* in, global data_t* out)
+{
+    uint i = get_global_id(0);
+
+    if(i < M * N)
+    {
+        uint m_i = iDiv(i, N);
+        uint n_i = iMod(i, m_i, N);
+
+        uint in_off  = m_i * N + n_i + IN_OFF;
+        uint out_off = n_i * M + m_i + OUT_OFF;
+
+        const global data_t* cin = (const global data_t*)(in + in_off);
+        global data_t* cout      = (global data_t*)(out + out_off);
+
+        *cout = *cin;
+    }
 }
 #endif

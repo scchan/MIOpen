@@ -32,6 +32,10 @@
 #include <miopen/legacy_exhaustive_search.hpp>
 #include <miopen/mlo_utils.hpp>
 #include <miopen/solver.hpp>
+#include <miopen/bfloat16.hpp>
+
+#include <half.hpp>
+
 #ifdef max
 #undef max
 #endif
@@ -59,9 +63,9 @@ ConvOclDirectFwdLegacyExhaustiveSearch::GetPerformanceConfig(const ConvolutionCo
                                                         : 32; // size of input data per ALU plane
 
     result.out_pix_tile0 =
-        std::max(params.kernel_stride0,
+        std::max(params.kernel_stride_w,
                  ((result.in_tile0 == 8) ? 1 : 2)); // size of ouptput tile per wk-item (ALU))
-    result.out_pix_tile1 = std::max(params.kernel_stride1, ((result.in_tile1 == 8) ? 1 : 2)); //
+    result.out_pix_tile1 = std::max(params.kernel_stride_h, ((result.in_tile1 == 8) ? 1 : 2)); //
 
     result.grp_tile0 = std::max(8, (result.in_tile0 / result.out_pix_tile0));
     result.grp_tile1 = std::max(8, (result.in_tile1 / result.out_pix_tile1));
@@ -73,11 +77,12 @@ ConvOclDirectFwdLegacyExhaustiveSearch::GetPerformanceConfig(const ConvolutionCo
 
     result.n_stacks = 1; // # of diff stacks (part of batch).
 
-    if(params.kernel_size0 == 1 && params.kernel_size1 == 1 && params.group_counts < 2)
+    if(params.kernel_size_w == 1 && params.kernel_size_h == 1 &&
+       params.group_counts == 1) // Group conv: None 1x1 version yet, fallback to universal kernel.
     {
 
         // version
-        if(params.in_data_type == "FP32" && params.direction.IsForward() &&
+        if(params.in_data_type == miopenFloat && params.direction.IsForward() &&
            params.n_inputs % 16 == 0 && params.n_outputs % 16 == 0)
         {
             result.n_in_data_tiles = 128;
@@ -95,7 +100,7 @@ ConvOclDirectFwdLegacyExhaustiveSearch::GetPerformanceConfig(const ConvolutionCo
             int i_sz             = params.out_height * params.out_width;
             result.out_pix_tile0 = (i_sz & 1) != 0 ? 1 : 2;
 
-            if(params.pad0 > 0 || params.kernel_stride0 > 1)
+            if(params.pad_w > 0 || params.kernel_stride_w > 1)
             {
                 if(params.direction.IsForward())
                 {
@@ -123,15 +128,15 @@ ConvOclDirectFwdLegacyExhaustiveSearch::GetPerformanceConfig(const ConvolutionCo
 /*
 * Measure the current configuration performance.
 */
-template <class... Solvers>
-static int MeasureLoop(Handle* profile_h,
-                       Data_t bot_ocl_buf,
-                       Data_t top_ocl_buf,
-                       Data_t wei_ocl_buf,
-                       Data_t bias_ocl_buf,
-                       double& processing_time,
-                       const ConvolutionContext& params,
-                       const LegacyPerformanceConfig& result)
+template <typename Tgpu, class... Solvers>
+static int MeasurePerfConfig(Handle& handle,
+                             ConstData_t bot_ocl_buf,
+                             Data_t top_ocl_buf,
+                             ConstData_t wei_ocl_buf,
+                             ConstData_t bias_ocl_buf,
+                             double& processing_time,
+                             const ConvolutionContext& params,
+                             const LegacyPerformanceConfig& result)
 {
     ConvSolution kernel_search_result{miopenStatusNotInitialized};
 
@@ -154,81 +159,46 @@ static int MeasureLoop(Handle* profile_h,
     {
         return 1;
     }
+#if !MIOPEN_ALLOC_BUFFERS
+    if(params.bias && bias_ocl_buf == nullptr)
+    {
+        MIOPEN_LOG((MIOPEN_INSTALLABLE ? miopen::LoggingLevel::Info : miopen::LoggingLevel::Error),
+                   "Legacy search: Bias buffer required");
+        return 2;
+    }
+#endif
 
     MIOPEN_LOG_I2("Trying " << result);
     const auto kernel_params     = kernel_search_result.construction_params[0];
     std::string compiler_options = params.general_compile_options + kernel_params.comp_options;
 
-    // Creating OCLKernel obj
     try
     {
+        Tgpu padding_value = static_cast<Tgpu>(0);
+        processing_time    = std::numeric_limits<double>::max();
 
-        float padding_value = 0;
+        auto k = handle.AddKernel("",
+                                  "",
+                                  kernel_params.kernel_file,
+                                  kernel_params.kernel_name,
+                                  kernel_params.l_wk,
+                                  kernel_params.g_wk,
+                                  compiler_options);
 
-        if(profile_h)
+        if(params.bias)
         {
-            processing_time = std::numeric_limits<float>::max();
-
-            auto k = profile_h->AddKernel("",
-                                          "",
-                                          kernel_params.kernel_file,
-                                          kernel_params.kernel_name,
-                                          kernel_params.l_wk,
-                                          kernel_params.g_wk,
-                                          compiler_options);
-
-            if(params.bias)
-            {
-                k(bot_ocl_buf, wei_ocl_buf, bias_ocl_buf, top_ocl_buf, padding_value);
-            }
-            else
-            {
-                k(bot_ocl_buf, wei_ocl_buf, top_ocl_buf, padding_value);
-            }
-            processing_time = profile_h->GetKernelTime();
+            k(bot_ocl_buf, wei_ocl_buf, bias_ocl_buf, top_ocl_buf, padding_value);
         }
         else
         {
-            double s = 0, e = 0;
-
-            auto k = params.GetStream().AddKernel("",
-                                                  "",
-                                                  kernel_params.kernel_file,
-                                                  kernel_params.kernel_name,
-                                                  kernel_params.l_wk,
-                                                  kernel_params.g_wk,
-                                                  compiler_options);
-
-            if(params.bias)
-            {
-                k(bot_ocl_buf, wei_ocl_buf, bias_ocl_buf, top_ocl_buf, padding_value);
-            }
-            else
-            {
-                k(bot_ocl_buf, wei_ocl_buf, top_ocl_buf, padding_value);
-            }
-
-            params.GetStream().Finish();
-
-            s = miopen_mach_absolute_time();
-
-            if(params.bias)
-            {
-                k(bot_ocl_buf, wei_ocl_buf, bias_ocl_buf, top_ocl_buf, padding_value);
-            }
-            else
-            {
-                k(bot_ocl_buf, wei_ocl_buf, top_ocl_buf, padding_value);
-            }
-
-            params.GetStream().Finish();
-            e = miopen_mach_absolute_time();
-
-            processing_time = subtractTimes(e, s);
+            k(bot_ocl_buf, wei_ocl_buf, top_ocl_buf, padding_value);
         }
+        processing_time = handle.GetKernelTime();
     }
-    catch(miopen::Exception&)
+    catch(miopen::Exception& ex)
     {
+        MIOPEN_LOG((MIOPEN_INSTALLABLE ? miopen::LoggingLevel::Info : miopen::LoggingLevel::Error),
+                   "Status: " << ex.status << ", Message: \"" << ex.what() << '\"');
         return -1;
     }
 
@@ -239,74 +209,90 @@ static int MeasureLoop(Handle* profile_h,
 LegacyPerformanceConfig
 ConvOclDirectFwdLegacyExhaustiveSearch::Search(const ConvolutionContext& params) const
 {
+    if(params.IsFp16())
+        return SearchImpl<half_float::half>(params);
+    else if(params.IsFp32())
+        return SearchImpl<float>(params);
+    else if(params.IsBfp16())
+        return SearchImpl<bfloat16>(params);
+    else
+    {
+        MIOPEN_THROW("Unsupported float_size");
+    }
+}
+
+template <typename Tgpu>
+LegacyPerformanceConfig
+ConvOclDirectFwdLegacyExhaustiveSearch::SearchImpl(const ConvolutionContext& params) const
+{
     LegacyPerformanceConfig result;
     bool is_passed = false;
 
-    miopen::Handle profile_h;
     double processing_time = std::numeric_limits<double>::max();
 
-    int min_grp_tile0 = 16;
-    int min_grp_tile1 = 16;
-    // tile 0
-    int min_in_tile0 = 16;
-    // tile 1
-    int min_in_tile1 = 16;
-    // out pix 0
-    int min_out_pix_tile0 = 1;
-    // out pix 1
-    int min_out_pix_tile1   = 1;
-    int min_n_out_pix_tiles = 2;
-    int min_n_in_data_tiles = 3;
-    int min_n_stacks        = 1;
+    LegacyPerformanceConfig candidate;
+    candidate.grp_tile0       = 16;
+    candidate.grp_tile1       = 16;
+    candidate.in_tile0        = 16;
+    candidate.in_tile1        = 16;
+    candidate.out_pix_tile0   = 1;
+    candidate.out_pix_tile1   = 1;
+    candidate.n_out_pix_tiles = 2;
+    candidate.n_in_data_tiles = 3;
+    candidate.n_stacks        = 1;
 
-    // enable profiling for the handle for benchmarking
-    profile_h.EnableProfiling();
+#if MIOPEN_ALLOC_BUFFERS
+    miopen::Handle profile_h;
 
-    // allocate tem input/output buffers
-    size_t bot_sz = params.bot_sz / sizeof(float);
-    std::vector<float> bot_sys_buf(bot_sz);
-
-    for(int i = 0; i < bot_sz; i++)
+    // allocate input/output buffers
+    size_t bot_sz = params.bot_sz / sizeof(Tgpu);
+    std::vector<Tgpu> bot_sys_buf(bot_sz);
+    for(size_t i = 0; i < bot_sz; i++)
     {
-        bot_sys_buf[i] = static_cast<float>(rand() * (1.0 / RAND_MAX));
+        bot_sys_buf[i] = static_cast<Tgpu>(rand() * (1.0 / RAND_MAX));
     }
-
     auto bot_ocl_buf = profile_h.Write(bot_sys_buf);
+    auto bot_ocl_ptr = bot_ocl_buf.get();
 
-    size_t top_sz = params.top_sz / sizeof(float);
-    std::vector<float> top_sys_buf(top_sz);
-
+    size_t top_sz = params.top_sz / sizeof(Tgpu);
+    std::vector<Tgpu> top_sys_buf(top_sz);
     auto top_ocl_buf = profile_h.Write(top_sys_buf);
+    auto top_ocl_ptr = top_ocl_buf.get();
 
-    std::vector<float> random_top_sys_buf(top_sz);
-    for(int i = 0; i < top_sz; i++)
+    size_t weights_sz = params.weights_sz / sizeof(Tgpu);
+    std::vector<Tgpu> wei_sys_buf(weights_sz);
+    for(size_t i = 0; i < weights_sz; i++)
     {
-        random_top_sys_buf[i] = static_cast<float>(rand() * (1.0 / RAND_MAX));
+        wei_sys_buf[i] = static_cast<Tgpu>((rand() * (1.0 / RAND_MAX) - 0.5) * 0.001);
     }
-
-    size_t weights_sz = params.weights_sz / sizeof(float);
-    std::vector<float> wei_sys_buf(weights_sz);
-    for(int i = 0; i < weights_sz; i++)
-    {
-        wei_sys_buf[i] = static_cast<float>((rand() * (1.0 / RAND_MAX) - 0.5) * 0.001);
-    }
-
     auto wei_ocl_buf = profile_h.Write(wei_sys_buf);
+    auto wei_ocl_ptr = wei_ocl_buf.get();
 
-    std::vector<float> bias_sys_buf;
+    std::vector<Tgpu> bias_sys_buf;
     miopen::Allocator::ManageDataPtr bias_ocl_buf = nullptr;
-
     if(params.bias != 0)
     {
-        size_t bias_sz = params.bias_sz / sizeof(float);
-        bias_sys_buf   = std::vector<float>(bias_sz);
-        for(int i = 0; i < bias_sz; i++)
+        size_t bias_sz = params.bias_sz / sizeof(Tgpu);
+        bias_sys_buf   = std::vector<Tgpu>(bias_sz);
+        for(size_t i = 0; i < bias_sz; i++)
         {
-            bias_sys_buf[i] = static_cast<float>(rand() * (1.0 / RAND_MAX));
+            bias_sys_buf[i] = static_cast<Tgpu>(rand() * (1.0 / RAND_MAX));
         }
 
         bias_ocl_buf = profile_h.Write(bias_sys_buf);
     }
+    auto bias_ocl_ptr = bias_ocl_buf.get();
+#else
+    auto& profile_h = params.GetStream();
+    auto bot_ocl_ptr =
+        params.direction.IsForward() ? params.GetBufs().io.fwd.x : params.GetBufs().io.bwd.dy;
+    auto top_ocl_ptr =
+        params.direction.IsForward() ? params.GetBufs().io.fwd.y : params.GetBufs().io.bwd.dx;
+    auto wei_ocl_ptr =
+        params.direction.IsForward() ? params.GetBufs().io.fwd.w : params.GetBufs().io.bwd.w;
+    auto bias_ocl_ptr = params.GetBufs().bias;
+#endif
+    AutoEnableProfiling enableProfiling{profile_h};
 
     // search loop here
     int grp_tl_ln[4]       = {8, 16, 32};
@@ -320,7 +306,7 @@ ConvOclDirectFwdLegacyExhaustiveSearch::Search(const ConvolutionContext& params)
 
     double min_proc_time = std::numeric_limits<double>::max();
 
-    size_t run_counter = 0;
+    size_t run_counter = 0, failed_counter = 0;
 
     int out_pix_tl_cnt = 3; // out_pix_tile_sz[1];
     int n_out_tls      = 4;
@@ -347,21 +333,20 @@ ConvOclDirectFwdLegacyExhaustiveSearch::Search(const ConvolutionContext& params)
 
     size_t report_inteval = 25;
 
-    long long runs_left = 0;
+    long long runs_left = 0, total_runs = 0;
 
-    if(params.kernel_size0 == 1 && params.kernel_size1 == 1 && params.group_counts < 2)
+    if(params.kernel_size_w == 1 && params.kernel_size_h == 1 &&
+       params.group_counts == 1) // Group conv: None 1x1 version yet, fallback to universal kernel.
     {
+        MIOPEN_LOG_W("Searching the best solution in the 4 dim space. Please, be patient...");
         int n_grp_tiles0 = 3;
-        std::cout << "Searching the best solution in the 4 dim space. Please, be patient it may "
-                     "take few minutes."
-                  << std::endl;
         result.grp_tile1 = 1;
         result.in_tile1  = 1;
         result.in_tile0  = 1;
         report_inteval   = 5;
 
         // Add 1x1_stride : no padding support yet
-        if(params.in_data_type == "FP32" && params.direction.IsForward() &&
+        if(params.in_data_type == miopenFloat && params.direction.IsForward() &&
            params.n_inputs % 16 == 0 && params.n_outputs % 16 == 0)
         {
 
@@ -383,14 +368,15 @@ ConvOclDirectFwdLegacyExhaustiveSearch::Search(const ConvolutionContext& params)
             n_grp_tiles0       = 1;
             grp_tl_ln[0]       = 64;
 
-            runs_left = out_pix_tl_cnt * n_out_tls * n_in_tls * (n_grp_tiles0 + 1);
+            runs_left  = out_pix_tl_cnt * n_out_tls * n_in_tls * (n_grp_tiles0 + 1);
+            total_runs = runs_left;
 
             result.out_pix_tile1 = 1;
         }
         else
         {
             int i_sz = params.in_width * params.in_height;
-            if(params.kernel_stride0 == 1)
+            if(params.kernel_stride_w == 1)
             {
                 out_pix_tl_cnt = (i_sz & 1) != 0 ? 1 : (i_sz & 0x3) != 0 ? 2 : 3;
             }
@@ -427,6 +413,7 @@ ConvOclDirectFwdLegacyExhaustiveSearch::Search(const ConvolutionContext& params)
             n_out_tls       = (n_out_tiles_rg[1] - n_out_tiles_rg[0] + 1);
             n_in_tls        = 2;
             runs_left       = n_grp_tiles * out_pix_tl_cnt * n_out_tls * n_in_tls;
+            total_runs      = runs_left;
 
             result.out_pix_tile1 = 0;
         }
@@ -461,75 +448,69 @@ ConvOclDirectFwdLegacyExhaustiveSearch::Search(const ConvolutionContext& params)
                         {
                             result.n_in_data_tiles = (1 << i_t);
                         }
-                        // randomize output
-                        profile_h.WriteTo(reinterpret_cast<const void*>(random_top_sys_buf.data()),
-                                          top_ocl_buf,
-                                          random_top_sys_buf.size() * sizeof(float));
 
-                        const auto ret = MeasureLoop<ConvOclDirectFwd1x1>(&profile_h,
-                                                                          bot_ocl_buf.get(),
-                                                                          top_ocl_buf.get(),
-                                                                          wei_ocl_buf.get(),
-                                                                          bias_ocl_buf.get(),
-                                                                          processing_time,
-                                                                          params,
-                                                                          result);
-
-                        runs_left--;
-                        runs_left = (runs_left < 0) ? 0 : runs_left;
-
+                        const auto ret =
+                            MeasurePerfConfig<Tgpu, ConvOclDirectFwd1x1>(profile_h,
+                                                                         bot_ocl_ptr,
+                                                                         top_ocl_ptr,
+                                                                         wei_ocl_ptr,
+                                                                         bias_ocl_ptr,
+                                                                         processing_time,
+                                                                         params,
+                                                                         result);
+                        --runs_left;
                         if(ret != 0)
                         {
+                            ++failed_counter;
                             continue;
+                        }
+
+                        is_passed = true;
+                        MIOPEN_LOG_T("##(n_current, n_failed, n_runs_total): " << run_counter
+                                                                               << " / "
+                                                                               << failed_counter
+                                                                               << " / "
+                                                                               << total_runs
+                                                                               << " elapsed_time: "
+                                                                               << processing_time
+                                                                               << " best_time: "
+                                                                               << processing_time
+                                                                               << ", "
+                                                                               << result);
+
+                        if(processing_time < min_proc_time)
+                        {
+                            MIOPEN_LOG_I('#' << run_counter << ' ' << processing_time << " < "
+                                             << min_proc_time
+                                             << ' '
+                                             << result);
+                            min_proc_time = processing_time;
+                            candidate     = result;
                         }
 
                         if(run_counter % report_inteval == 0)
                         {
-                            min_proc_time = (run_counter == 0) ? processing_time : min_proc_time;
-                            std::cout
-                                << "Runs left : " << runs_left << ", "
-                                << "min time so far : " << min_proc_time << ", "
-                                << "curr time : " << processing_time << ", " << result.grp_tile1
-                                << ", " << result.grp_tile0 << ", " << result.in_tile1 << ", "
-                                << result.in_tile0 << ", " << result.out_pix_tile1 << ", "
-                                << result.out_pix_tile0 << ", " << result.n_out_pix_tiles << ", "
-                                << result.n_in_data_tiles << ", " << result.n_stacks << std::endl;
+                            MIOPEN_LOG_W("Runs left: " << runs_left << ", "
+                                                       << "min time so far: "
+                                                       << min_proc_time
+                                                       << ", "
+                                                       << "curr time: "
+                                                       << processing_time
+                                                       << ' '
+                                                       << result);
                         }
-
-                        is_passed = true;
-
                         run_counter++;
-
-                        if(min_proc_time > processing_time)
-                        {
-                            min_proc_time       = processing_time;
-                            min_grp_tile0       = result.grp_tile0;
-                            min_grp_tile1       = result.grp_tile1;
-                            min_in_tile0        = result.in_tile0;
-                            min_in_tile1        = result.in_tile1;
-                            min_out_pix_tile0   = result.out_pix_tile0;
-                            min_out_pix_tile1   = result.out_pix_tile1;
-                            min_n_out_pix_tiles = result.n_out_pix_tiles;
-                            min_n_in_data_tiles = result.n_in_data_tiles;
-                            min_n_stacks        = result.n_stacks;
-                            MIOPEN_LOG_I2(
-                                "processing_time = " << processing_time << ", result = " << result);
-                        }
-
-                    } // for (int i_t = n_in_tiles_rg[0]; i_t <= n_in_tiles_rg[1]; ++i_t)
-                }     // if (result.out_pix_tile0 > result.in_tile0)
-            }         // for (int l = 0; l < l_l; ++l)
-        }             // for (int g0 = 0; g0 < 2; ++g0)
+                    }
+                }
+            }
+        }
     }
     else
     {
-
-        std::cout << "Searching the best solution in the 9 dim space. Please, be patient it may "
-                     "take few minutes."
-                  << std::endl;
-
+        MIOPEN_LOG_W("Searching the best solution in the 9 dim space. Please, be patient...");
         runs_left = /*n_grp_tiles * */ n_tiles_cnt * out_pix_tl_cnt * out_pix_tl_cnt * n_out_tls *
                     n_in_tls * stack_cnt;
+        total_runs = runs_left;
 
         // tile1
         for(int j = 0; j < n_tile1_sz; ++j)
@@ -538,8 +519,7 @@ ConvOclDirectFwdLegacyExhaustiveSearch::Search(const ConvolutionContext& params)
             result.in_tile1 = tile_sz1[j];
             if(params.out_height * 2 <= result.in_tile1 && result.in_tile1 > tile_sz[0])
             {
-                runs_left--;
-                runs_left = (runs_left < 0) ? 0 : runs_left;
+                --runs_left;
                 continue;
             }
 
@@ -549,22 +529,19 @@ ConvOclDirectFwdLegacyExhaustiveSearch::Search(const ConvolutionContext& params)
                 result.in_tile0 = tile_sz0[i];
                 if((params.out_width * 2 <= result.in_tile0 && result.in_tile0 > tile_sz[0]))
                 {
-                    runs_left--;
-                    runs_left = (runs_left < 0) ? 0 : runs_left;
+                    --runs_left;
                     continue;
                 }
                 if(params.out_height > 16 && params.out_width > 16 &&
                    ((result.in_tile1 == 8 && result.in_tile0 == 8) ||
                     (result.grp_tile0 == 8 && result.grp_tile1 == 8)))
                 {
-                    runs_left--;
-                    runs_left = (runs_left < 0) ? 0 : runs_left;
+                    --runs_left;
                     continue;
                 }
                 if(params.out_width > 32 && result.in_tile1 > result.in_tile0)
                 {
-                    runs_left--;
-                    runs_left = (runs_left < 0) ? 0 : runs_left;
+                    --runs_left;
                     continue;
                 }
                 // out pix 1
@@ -575,8 +552,7 @@ ConvOclDirectFwdLegacyExhaustiveSearch::Search(const ConvolutionContext& params)
                     result.grp_tile1     = result.in_tile1 / result.out_pix_tile1;
                     if(result.out_pix_tile1 > result.in_tile1 || result.grp_tile1 < 8)
                     {
-                        runs_left--;
-                        runs_left = (runs_left < 0) ? 0 : runs_left;
+                        --runs_left;
                         continue;
                     }
                     // out pix 0
@@ -588,8 +564,7 @@ ConvOclDirectFwdLegacyExhaustiveSearch::Search(const ConvolutionContext& params)
 
                         if(result.out_pix_tile0 > result.in_tile0 || result.grp_tile0 < 8)
                         {
-                            runs_left--;
-                            runs_left = (runs_left < 0) ? 0 : runs_left;
+                            --runs_left;
                             continue;
                         }
 
@@ -598,8 +573,7 @@ ConvOclDirectFwdLegacyExhaustiveSearch::Search(const ConvolutionContext& params)
                             result.n_out_pix_tiles = n_out_tiles_rg[o_t];
                             if(params.n_outputs < result.n_out_pix_tiles)
                             {
-                                runs_left--;
-                                runs_left = (runs_left < 0) ? 0 : runs_left;
+                                --runs_left;
                                 continue;
                             }
 
@@ -608,8 +582,7 @@ ConvOclDirectFwdLegacyExhaustiveSearch::Search(const ConvolutionContext& params)
                                 result.n_in_data_tiles = n_in_tiles_rg[i_t];
                                 if(params.n_inputs < result.n_in_data_tiles)
                                 {
-                                    runs_left--;
-                                    runs_left = (runs_left < 0) ? 0 : runs_left;
+                                    --runs_left;
                                     continue;
                                 }
 
@@ -619,8 +592,7 @@ ConvOclDirectFwdLegacyExhaustiveSearch::Search(const ConvolutionContext& params)
                                     result.n_stacks = n_in_stacks_sz[s];
                                     if(result.n_stacks > params.batch_sz)
                                     {
-                                        runs_left--;
-                                        runs_left = (runs_left < 0) ? 0 : runs_left;
+                                        --runs_left;
                                         continue;
                                     }
 
@@ -628,89 +600,119 @@ ConvOclDirectFwdLegacyExhaustiveSearch::Search(const ConvolutionContext& params)
                                            result.n_out_pix_tiles * result.n_stacks >=
                                        128)
                                     {
-                                        runs_left--;
-                                        runs_left = (runs_left < 0) ? 0 : runs_left;
+                                        --runs_left;
                                         continue;
                                     }
 
                                     const auto ret =
-                                        MeasureLoop<ConvOclDirectFwd>(&profile_h,
-                                                                      bot_ocl_buf.get(),
-                                                                      top_ocl_buf.get(),
-                                                                      wei_ocl_buf.get(),
-                                                                      bias_ocl_buf.get(),
-                                                                      processing_time,
-                                                                      params,
-                                                                      result);
-                                    runs_left--;
-                                    runs_left = (runs_left < 0) ? 0 : runs_left;
+                                        MeasurePerfConfig<Tgpu, ConvOclDirectFwd>(profile_h,
+                                                                                  bot_ocl_ptr,
+                                                                                  top_ocl_ptr,
+                                                                                  wei_ocl_ptr,
+                                                                                  bias_ocl_ptr,
+                                                                                  processing_time,
+                                                                                  params,
+                                                                                  result);
 
+                                    --runs_left;
                                     if(ret != 0)
                                     {
+                                        ++failed_counter;
                                         continue;
+                                    }
+
+                                    is_passed = true;
+                                    MIOPEN_LOG_T("##(n_current, n_failed, n_runs_total): "
+                                                 << run_counter
+                                                 << " / "
+                                                 << failed_counter
+                                                 << " / "
+                                                 << total_runs
+                                                 << " elapsed_time: "
+                                                 << processing_time
+                                                 << " best_time: "
+                                                 << processing_time
+                                                 << ", "
+                                                 << result);
+
+                                    if(processing_time < min_proc_time)
+                                    {
+                                        MIOPEN_LOG_I('#' << run_counter << ' ' << processing_time
+                                                         << " < "
+                                                         << min_proc_time
+                                                         << ' '
+                                                         << result);
+                                        min_proc_time = processing_time;
+                                        candidate     = result;
                                     }
 
                                     if(run_counter % report_inteval == 0)
                                     {
-                                        min_proc_time =
-                                            (run_counter == 0) ? processing_time : min_proc_time;
-
-                                        std::cout
-                                            << "Runs left : " << runs_left << ", "
-                                            << "min time so far : " << min_proc_time << ", "
-                                            << "curr time : " << processing_time << ", "
-                                            << result.grp_tile1 << ", " << result.grp_tile0 << ", "
-                                            << result.in_tile1 << ", " << result.in_tile0 << ", "
-                                            << result.out_pix_tile1 << ", " << result.out_pix_tile0
-                                            << ", " << result.n_out_pix_tiles << ", "
-                                            << result.n_in_data_tiles << ", " << result.n_stacks
-                                            << std::endl;
+                                        MIOPEN_LOG_W("Runs left: " << runs_left << ", "
+                                                                   << "min time so far: "
+                                                                   << min_proc_time
+                                                                   << ", "
+                                                                   << "curr time: "
+                                                                   << processing_time
+                                                                   << ' '
+                                                                   << result);
                                     }
-
-                                    is_passed = true;
-
                                     run_counter++;
-
-                                    if(min_proc_time > processing_time)
-                                    {
-                                        min_proc_time       = processing_time;
-                                        min_grp_tile0       = result.grp_tile0;
-                                        min_grp_tile1       = result.grp_tile1;
-                                        min_in_tile0        = result.in_tile0;
-                                        min_in_tile1        = result.in_tile1;
-                                        min_out_pix_tile0   = result.out_pix_tile0;
-                                        min_out_pix_tile1   = result.out_pix_tile1;
-                                        min_n_out_pix_tiles = result.n_out_pix_tiles;
-                                        min_n_in_data_tiles = result.n_in_data_tiles;
-                                        min_n_stacks        = result.n_stacks;
-                                        MIOPEN_LOG_I2("processing_time = " << processing_time
-                                                                           << ", result = "
-                                                                           << result);
-                                    }
-
-                                } // for (int s = 0; s < 3; ++s)
-                            }     // for (int i_t = n_in_tiles_rg[0]; i_t <= n_in_tiles_rg[1];
-                            // ++i_t)
-                        } // if (result.out_pix_tile0 > result.in_tile0)
-                    }     // for (int l = 0; l < l_l; ++l)
-                }         // for (int k = 0; k < k_l; ++k)
-            }             // for (int i = 0; i < 3; ++i)
-        }                 // for (int j = 0; j < 3; ++j)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
+    // Compare search results vs. default performance config.
+    {
+        int ret                   = -1;
+        double default_time       = std::numeric_limits<double>::max();
+        const auto default_config = GetPerformanceConfig(params);
+        if(params.kernel_size_w == 1 && params.kernel_size_h == 1 &&
+           params.group_counts ==
+               1) // Group conv: None 1x1 version yet, fallback to universal kernel.
+        {
+            ret = MeasurePerfConfig<Tgpu, ConvOclDirectFwd1x1>(profile_h,
+                                                               bot_ocl_ptr,
+                                                               top_ocl_ptr,
+                                                               wei_ocl_ptr,
+                                                               bias_ocl_ptr,
+                                                               default_time,
+                                                               params,
+                                                               default_config);
+        }
+        else
+        {
+            ret = MeasurePerfConfig<Tgpu, ConvOclDirectFwd>(profile_h,
+                                                            bot_ocl_ptr,
+                                                            top_ocl_ptr,
+                                                            wei_ocl_ptr,
+                                                            bias_ocl_ptr,
+                                                            default_time,
+                                                            params,
+                                                            default_config);
+        }
+        if(ret == 0)
+        {
+            is_passed = true;
+            MIOPEN_LOG_W("Default run, min time so far: " << min_proc_time << ", default time: "
+                                                          << default_time
+                                                          << ' '
+                                                          << default_config);
+            if(min_proc_time > default_time)
+            {
+                MIOPEN_LOG_W("* * * Default time < min time, using default config * * *");
+                min_proc_time = default_time;
+                candidate     = default_config;
+            }
+        }
+        MIOPEN_LOG_W("...Score: " << (default_time / min_proc_time));
+    }
+    result = candidate;
 
-    std::cout << std::endl << "Score: " << min_proc_time << std::endl;
-
-    result.grp_tile0       = min_grp_tile0;
-    result.grp_tile1       = min_grp_tile1;
-    result.in_tile0        = min_in_tile0;
-    result.in_tile1        = min_in_tile1;
-    result.out_pix_tile0   = min_out_pix_tile0;
-    result.out_pix_tile1   = min_out_pix_tile1;
-    result.n_out_pix_tiles = min_n_out_pix_tiles;
-    result.n_in_data_tiles = min_n_in_data_tiles;
-    result.n_stacks        = min_n_stacks;
-
-    profile_h.EnableProfiling(false);
     if(!is_passed)
         MIOPEN_THROW("Search failed for ConvOclDirectFwdLegacyExhaustiveSearch");
     return result;

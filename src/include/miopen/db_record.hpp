@@ -26,9 +26,12 @@
 #ifndef GUARD_MIOPEN_DB_RECORD_HPP_
 #define GUARD_MIOPEN_DB_RECORD_HPP_
 
+#include <miopen/config.h>
+
 #include <miopen/logger.hpp>
 
 #include <cassert>
+#include <istream>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -67,35 +70,65 @@ class DbRecord
 {
     public:
     template <class TValue>
-    class Iterator
+    class Iterator : public std::iterator<std::input_iterator_tag, std::pair<std::string, TValue>>
     {
         friend class DbRecord;
 
         using InnerIterator = std::unordered_map<std::string, std::string>::const_iterator;
 
         public:
-        std::pair<const std::string&, TValue> operator*() const
+        using Value = std::pair<std::string, TValue>;
+
+        Value operator*() const
         {
             assert(it != InnerIterator{});
-            TValue value;
-            value.Deserialize(it->second);
-            return {it->first, value};
+            return value;
+        }
+
+        const Value* operator->() const
+        {
+            assert(it != InnerIterator{});
+            return &value;
+        }
+
+        Value* operator->()
+        {
+            assert(it != InnerIterator{});
+            return &value;
         }
 
         Iterator& operator++()
         {
             ++it;
+            value = GetValue(it);
             return *this;
         }
 
-        const Iterator operator++(int) { return Iterator{it++}; }
+        const Iterator operator++(int) // NOLINT (readability-const-return-type)
+        {
+            auto ret = *this;
+            ++(*this);
+            return ret;
+        }
 
         bool operator==(const Iterator& other) const { return it == other.it; }
         bool operator!=(const Iterator& other) const { return it != other.it; }
 
         private:
-        Iterator(const InnerIterator it_) : it(it_) {}
         InnerIterator it;
+        Value value;
+
+        Iterator(const InnerIterator it_) : it(it_), value(GetValue(it_)) {}
+
+        static Value GetValue(const InnerIterator& it)
+        {
+            if(it == InnerIterator{})
+                return {};
+
+            auto value = TValue{};
+            value.Deserialize(it->second);
+            return {it->first, value};
+        }
     };
 
     template <class TValue>
@@ -126,12 +159,18 @@ class DbRecord
         return ss.str();
     }
 
-    bool ParseContents(const std::string& contents);
+    bool ParseContents(std::istream& contents);
     void WriteContents(std::ostream& stream) const;
     bool SetValues(const std::string& id, const std::string& values);
     bool GetValues(const std::string& id, std::string& values) const;
 
     DbRecord(const std::string& key_) : key(key_) {}
+
+    bool ParseContents(const std::string& contents)
+    {
+        auto ss = std::istringstream(contents);
+        return ParseContents(ss);
+    }
 
     public:
     /// T shall provide a db KEY by means of the "void Serialize(std::ostream&) const" member
@@ -140,6 +179,10 @@ class DbRecord
     DbRecord(const T& problem_config_) : DbRecord(Serialize(problem_config_))
     {
     }
+
+    auto GetSize() const { return map.size(); }
+
+    const std::string& GetKey() const { return key; }
 
     /// Merges data from this record to data from that record if their keys are same.
     /// This record would contain all ID:VALUES pairs from that record that are not in this.
@@ -174,7 +217,7 @@ class DbRecord
 
         const bool ok = values.Deserialize(s);
         if(!ok)
-            MIOPEN_LOG(LoggingLevel::Warning,
+            MIOPEN_LOG((MIOPEN_INSTALLABLE ? LoggingLevel::Warning : miopen::LoggingLevel::Error),
                        "Perf db record is obsolete or corrupt: " << s
                                                                  << ". Performance may degrade.");
         return ok;
@@ -192,6 +235,7 @@ class DbRecord
     }
 
     friend class Db;
+    friend class ReadonlyRamDb;
 };
 
 } // namespace miopen

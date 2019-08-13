@@ -26,6 +26,7 @@
 #include <array>
 #include <initializer_list>
 #include <miopen/errors.hpp>
+#include <miopen/handle.hpp>
 #include <miopen/logger.hpp>
 #include <miopen/tensor.hpp>
 #include <miopen/tensor_ops.hpp>
@@ -227,7 +228,7 @@ extern "C" miopenStatus_t miopenSetTensor(miopenHandle_t handle,
                                           const void* alpha)
 {
 
-    MIOPEN_LOG_FUNCTION(yDesc, y, alpha);
+    MIOPEN_LOG_FUNCTION(handle, yDesc, y, alpha);
     return miopen::try_(
         [&] { SetTensor(miopen::deref(handle), miopen::deref(yDesc), DataCast(y), alpha); });
 }
@@ -238,7 +239,28 @@ extern "C" miopenStatus_t miopenScaleTensor(miopenHandle_t handle,
                                             const void* alpha)
 {
 
-    MIOPEN_LOG_FUNCTION(yDesc, y, alpha);
+    MIOPEN_LOG_FUNCTION(handle, yDesc, y, alpha);
     return miopen::try_(
         [&] { ScaleTensor(miopen::deref(handle), miopen::deref(yDesc), DataCast(y), alpha); });
+}
+
+extern "C" miopenStatus_t miopenTransformTensor(miopenHandle_t handle,
+                                                const void* alpha,
+                                                const miopenTensorDescriptor_t xDesc,
+                                                const void* x,
+                                                const void* beta,
+                                                const miopenTensorDescriptor_t yDesc,
+                                                void* y)
+{
+    // dstValue = alpha[0]*srcValue + beta[0]*priorDstValue
+    MIOPEN_LOG_FUNCTION(handle, alpha, xDesc, x, beta, yDesc, y);
+    return miopen::try_([&] {
+        TransformTensor(miopen::deref(handle),
+                        alpha,
+                        miopen::deref(xDesc),
+                        DataCast(x),
+                        beta,
+                        miopen::deref(yDesc),
+                        DataCast(y));
+    });
 }

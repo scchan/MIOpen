@@ -24,15 +24,38 @@
  *
  *******************************************************************************/
 
-#pragma once
+#ifndef MIOPEN_GUARD_MLOPEN_MD_GRAPH_HPP
+#define MIOPEN_GUARD_MLOPEN_MD_GRAPH_HPP
+
 #include <miopen/miopen.h>
 #include <miopen/fusion_ops.hpp>
 #include <miopen/fusion.hpp>
 
-#include <boost/functional/hash.hpp>
 #include <unordered_map>
 
 namespace miopen {
+
+enum ArgOwnerType
+{
+    Other,
+    InputTensor,
+    OutputTensor,
+    DevAttribute,
+    OpArg,
+    OpAttr,
+    InputTensorDesc,
+    OutputTensorDesc
+};
+
+struct DefaultKernelArg
+{
+    DefaultKernelArg(std::string k, ArgOwnerType t, OpKernelArg v, int idx = 0)
+        : type(t), default_val(v), op_idx(idx), key(k){};
+    ArgOwnerType type;
+    OpKernelArg default_val;
+    int op_idx;
+    std::string key;
+};
 
 struct MDGraph_vertex
 {
@@ -45,46 +68,47 @@ struct MDGraph_vertex
     miopenFusionOp_t op;
     bool is_leaf = false;
     std::map<std::string, std::string> vertex_data;
+    std::vector<std::string> supported_arch;
     size_t map_hash = 0;
     int id;
 
     MDGraph_vertex(const MDGraph_vertex& other) = delete;
     std::string& operator[](std::string& x) { return vertex_data[x]; }
+    std::vector<DefaultKernelArg> default_args;
 
     solver::AnySolver solver;
     friend std::ostream& operator<<(std::ostream& stream, const MDGraph_vertex& v);
 };
 
 using MDGraph_vertex_ptr = std::shared_ptr<MDGraph_vertex>;
+using cur_vertex_map     = std::unordered_map<std::string, boost::any>;
 
 struct FusionMDGraph
 {
-    using cur_vertex_map = std::unordered_map<std::string, boost::any>;
     FusionMDGraph() { Reset(); }
     static void Init(FusionMDGraph& g, miopenFusionOp_t op);
     static void InitConv(FusionMDGraph& g);
     static void InitBN(FusionMDGraph& g);
+    static void InitBNFwd(FusionMDGraph& g);
+    static void InitBNBwd(FusionMDGraph& g);
     void Reset();
-    bool Advance(std::shared_ptr<FusionOpDescriptor> op);
+    bool Advance(std::shared_ptr<FusionOpDescriptor> op,
+                 std::function<bool(const std::string& sym, int& val)> attr_fun);
     void AddEdge(MDGraph_vertex_ptr src, MDGraph_vertex_ptr dst, FusionMDGraph_Edge_Map& map);
 
     bool CmpOpKey(const FusionMDGraph_Edge_Map& edge_val,
-                  const FusionMDGraph_Edge_Map& op_val) const;
-    MDGraph_vertex_ptr GetCurVertex();
-    std::string GetProgramName();
-    std::string GetKernelName();
-    std::string GetAlgoName();
+                  std::function<bool(const std::string& sym, int& val)> attr_fun,
+                  std::unordered_map<std::string, int>& syms) const;
+    MDGraph_vertex_ptr GetCurVertex(Handle& handle);
+    std::string GetProgramName(Handle& handle);
+    std::string GetKernelName(Handle& handle);
+    std::string GetAlgoName(Handle& handle);
+    std::vector<DefaultKernelArg> GetKernelArgs(Handle& handle);
     std::vector<miopenConvFwdAlgorithm_t> GetConvAlgos();
     bool SetConvAlgo(miopenConvFwdAlgorithm_t algo);
-    static FusionMDGraph_Edge_Map EmptyEdgeMap(int weight = 0, MDGraph_op_t op = OpAny);
-    static bool ExecEdgeOp(const EdgeOp& edg_op, const EdgeOp& op_val);
-    static bool ExecOpEqual(const EdgeOp& edg_op, const EdgeOp& op_val);
-    static bool ExecOpModulo(const EdgeOp& edg_op, const EdgeOp& op_val);
-    static bool ExecOpGTE(const EdgeOp& edg_op, const EdgeOp& op_val);
-    static bool ExecOpLTE(const EdgeOp& edg_op, const EdgeOp& op_val);
     std::vector<solver::AnySolver> GetSolvers();
+    void WriteToFile(std::string filename = "");
 
-    protected:
     std::vector<std::pair<MDGraph_vertex_ptr, cur_vertex_map>> cur_vertex;
     std::set<miopenConvFwdAlgorithm_t> conv_algo_set;
 
@@ -94,3 +118,5 @@ struct FusionMDGraph
 };
 
 } // namespace miopen
+
+#endif

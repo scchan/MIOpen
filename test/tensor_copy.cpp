@@ -142,6 +142,7 @@ struct tensor_copy_driver : test_driver
 
     tensor_copy_driver()
     {
+        disabled_cache            = true;
         std::vector<int> src_lens = {32, 16, 32, 16, 16};
         std::vector<int> dst_lens = {32, 32, 16, 16, 16};
 
@@ -153,7 +154,8 @@ struct tensor_copy_driver : test_driver
 
     void run()
     {
-        unsigned long max_value = miopen_type<T>{} == miopenHalf ? 5 : 17;
+        unsigned long max_value =
+            miopen_type<T>{} == miopenHalf ? 5 : miopen_type<T>{} == miopenInt8 ? 127 : 17;
 
         srcSuper = tensor<T>{srcSuperLens}.generate(tensor_elem_gen_integer{max_value});
         dstSuper = tensor<T>{dstSuperLens}.generate(tensor_elem_gen_integer{max_value});

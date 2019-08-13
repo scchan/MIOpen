@@ -27,16 +27,17 @@
 #define GUARD_MIOPEN_TENSOR_OPPS_HPP_
 
 #include <miopen/common.hpp>
-#include <miopen/datatype.hpp>
-#include <miopen/handle.hpp>
 #include <miopen/miopen.h>
 #include <miopen/object.hpp>
+#include <miopen/tensor.hpp>
 #include <miopen/functional.hpp>
 #include <vector>
 #include <boost/range/combine.hpp>
 #include <boost/range/adaptor/filtered.hpp>
 
 namespace miopen {
+
+struct Handle;
 
 struct f_length_is_not_1_t
 {
@@ -177,5 +178,21 @@ void CopyTensor(Handle& handle,
                 int srcOffset = 0,
                 int dstOffset = 0);
 
+void CastTensor(Handle& handle,
+                const void* alpha,
+                const TensorDescriptor& srcDesc,
+                ConstData_t src,
+                const TensorDescriptor& dstDesc,
+                Data_t dst,
+                int srcOffset = 0,
+                int dstOffset = 0);
+
+void TransformTensor(Handle& handle,
+                     const void* alpha,
+                     const TensorDescriptor& xDesc,
+                     ConstData_t x,
+                     const void* beta,
+                     const TensorDescriptor& yDesc,
+                     Data_t y);
 } // namespace miopen
 #endif // GUARD_MIOPEN_TENSOR_OPPS_HPP_

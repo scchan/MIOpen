@@ -17,6 +17,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-
     clang-format-3.8 \
     clang-tidy-3.8 \
     cmake \
+    comgr \
     curl \
     doxygen \
     g++-mingw-w64 \
@@ -37,6 +38,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-
     python \
     python-dev \
     python-pip \
+    rocm-device-libs \
     rocm-opencl \
     rocm-opencl-dev \
     software-properties-common \
@@ -55,23 +57,23 @@ RUN wget https://github.com/Yelp/dumb-init/releases/download/v1.2.0/dumb-init_1.
 RUN dpkg -i dumb-init_*.deb && rm dumb-init_*.deb
 
 # Install cget
-RUN pip install cget
+RUN pip install https://github.com/pfultz2/cget/archive/57b3289000fcdb3b7e424c60a35ea09bc44d8538.tar.gz
 
 # Add the windows toolchain
 ADD cmake/mingw-toolchain.cmake $PREFIX/x86_64-w64-mingw32/cmake/toolchain.cmake
 RUN cget -p $PREFIX/x86_64-w64-mingw32 init -t $PREFIX/x86_64-w64-mingw32/cmake/toolchain.cmake
 
-# Build hcc
-RUN git clone https://github.com/RadeonOpenCompute/hcc.git -b clang_tot_upgrade /hcc && \
-    cd hcc && \
-    git reset --hard 5a607e6e3c04c23c83d5c78d9eae5aaa4b8c2998 && \
-    git submodule init && \
-    git submodule update --recursive && \
-    cget -p $PREFIX install hcc,. && cd .. && rm -rf /hcc
+# Install rclone
+RUN pip install https://github.com/pfultz2/rclone/archive/master.tar.gz
 
-# This is a workaround for broken installations
-RUN ln -s $PREFIX /opt/rocm/hip
-RUN ln -s $PREFIX /opt/rocm/hcc
+# Install hcc
+RUN rclone -b extractkernels-path -c f460d4eb92 https://github.com/RadeonOpenCompute/hcc.git /hcc
+RUN cget -p $PREFIX install hcc,/hcc  && rm -rf /hcc
+
+# Workaround hip: It doesn't use cmake's compiler, only the compiler at /opt/rocm/hcc/bin/hcc
+RUN mkdir -p /opt/rocm/hcc/bin
+RUN ln -s $PREFIX/bin/hcc /opt/rocm/hcc/bin/hcc
+RUN ln -s $PREFIX/bin/hcc-config /opt/rocm/hcc/bin/hcc-config
 
 # Build using hcc
 RUN cget -p $PREFIX init --cxx $PREFIX/bin/hcc --std=c++14
@@ -79,6 +81,7 @@ RUN cget -p $PREFIX init --cxx $PREFIX/bin/hcc --std=c++14
 # Install dependencies
 ADD dev-requirements.txt /dev-requirements.txt
 ADD requirements.txt /requirements.txt
+ADD min-requirements.txt /min-requirements.txt
 RUN CXXFLAGS='-isystem $PREFIX/include' cget -p $PREFIX install -f /dev-requirements.txt
 
 # Install doc requirements

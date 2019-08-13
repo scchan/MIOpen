@@ -99,6 +99,8 @@ void PrintHelp()
     std::cout << "           -l[ine-size] <number>: bytes in one line. Default: 16." << std::endl;
     std::cout << "           -b[uffer] <number>: read buffer size. Default: 512." << std::endl;
     std::cout << "           -g[uard] <string>: guard name. Default: no guard" << std::endl;
+    std::cout << "           -n[o-recurse] : dont expand include files recursively. Default: off"
+              << std::endl;
 }
 
 [[gnu::noreturn]] void WrongUsage(const std::string& error)
@@ -116,7 +118,11 @@ void PrintHelp()
     WrongUsage(ss.str());
 }
 
-void Process(std::string sourcePath, std::ostream& target, size_t bufferSize, size_t lineSize)
+void Process(const std::string& sourcePath,
+             std::ostream& target,
+             size_t bufferSize,
+             size_t lineSize,
+             bool recurse)
 {
     std::string fileName(sourcePath);
     std::string extension, root;
@@ -146,17 +152,31 @@ void Process(std::string sourcePath, std::ostream& target, size_t bufferSize, si
         std::exit(1);
     }
 
-    if(extension == "s")
+    const auto is_asm    = extension == "s";
+    const auto is_cl     = extension == "cl";
+    const auto is_hip    = extension == "cpp";
+    const auto is_header = extension == "hpp";
+
+    if(is_asm || is_cl || is_hip || is_header)
     {
         IncludeInliner inliner;
 
         try
         {
-            inliner.Process(sourceFile, inlinerTemp, root, sourcePath);
+            if(is_asm)
+                inliner.Process(
+                    sourceFile, inlinerTemp, root, sourcePath, ".include", false, recurse);
+            else if(is_cl || is_header)
+                inliner.Process(
+                    sourceFile, inlinerTemp, root, sourcePath, "#include", true, recurse);
+            else if(is_hip)
+                inliner.Process(
+                    sourceFile, inlinerTemp, root, sourcePath, "<#not_include>", true, false);
         }
         catch(const InlineException& ex)
         {
-            std::cerr << ex.what() << std::endl;
+            std::cerr << ex.What() << std::endl;
+            std::cerr << ex.GetTrace() << std::endl;
             std::exit(1);
         }
 
@@ -181,8 +201,9 @@ int main(int argsn, char** args)
 
     std::ofstream targetFile;
     std::ostream* target = &std::cout;
+    bool recurse         = true;
 
-    size_t i = 0;
+    int i = 0;
     while(++i < argsn && **args != '-')
     {
         std::string arg(args[i] + 1);
@@ -199,7 +220,7 @@ int main(int argsn, char** args)
 
             while(++i < argsn)
             {
-                Process(args[i], *target, bufferSize, lineSize);
+                Process(args[i], *target, bufferSize, lineSize, recurse);
             }
 
             if(guard.length() > 0)
@@ -220,6 +241,8 @@ int main(int argsn, char** args)
             bufferSize = std::stol(args[++i]);
         else if(arg == "g" || arg == "guard")
             guard = args[++i];
+        else if(arg == "n" || arg == "no-recurse")
+            recurse = false;
         else
             UnknownArgument(arg);
     }

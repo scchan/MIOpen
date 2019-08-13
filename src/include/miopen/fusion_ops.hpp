@@ -24,8 +24,8 @@
  *
  *******************************************************************************/
 
-#pragma once
-#include <miopen/logger.hpp>
+#ifndef MIOPEN_GUARD_MLOPEN_FUSION_OPS_HPP
+#define MIOPEN_GUARD_MLOPEN_FUSION_OPS_HPP
 
 #include <string>
 #include <unordered_map>
@@ -41,6 +41,9 @@ enum miopenFusionOp_t
     miopenFusionOpActivForward       = 1,
     miopenFusionOpBatchNormInference = 2,
     miopenFusionOpBiasForward        = 3,
+    miopenFusionOpBatchNormFwdTrain  = 4,
+    miopenFusionOpBatchNormBwdTrain  = 5,
+    miopenFusionOpActivBackward      = 6,
 };
 
 enum MDGraph_op_t
@@ -51,34 +54,26 @@ enum MDGraph_op_t
     OpModulo,   // op_val.val % edg_val.val == edg_val.result (only supported for ints)
     OpGTE,      // op_val.val >= edg_val.val (only supported for ints)
     OpLTE,      // op_val.val <= edg_val.val (only supported for ints)
+    OpEval,     // Evaluate the string expression
+    OpAdd,
+    OpSub,
+    OpMul,
+    OpDiv,
+    OpPow,
+    OpAnd,
+    OpOr,
+    OpCeil,
+    OpAssign,
+    OpGT,
+    OpLT,
 };
 
 std::ostream& operator<<(std::ostream& stream, const MDGraph_op_t& o);
 std::ostream& operator<<(std::ostream& stream, const boost::any& a);
 
-struct EdgeOp
-{
-    template <class U, class V>
-    EdgeOp(U v, V r = true, MDGraph_op_t o = OpAny) : val(v), result(r), op(o){};
-    boost::any val;
-    boost::any result;
-    MDGraph_op_t op = OpAny;
-    friend std::ostream& operator<<(std::ostream& stream, const EdgeOp& o)
-    {
-        stream << "val: " << o.val << " op: " << o.op;
-        return stream;
-    }
-};
-
-using FusionMDGraph_Op_Map       = std::unordered_map<std::string, EdgeOp>;
-using FusionMDGraph_Edge_Map     = std::unordered_map<std::string, std::vector<EdgeOp>>;
+// using FusionMDGraph_Op_Map       = std::unordered_map<std::string, EdgeOp>;
+using FusionMDGraph_Edge_Map     = std::unordered_map<std::string, std::vector<std::string>>;
 using FusionMDGraph_Edge_Map_Vec = std::vector<FusionMDGraph_Edge_Map>;
-
-template <class M, class K, class... Ts>
-void map_emplace(M& m, const K& k, Ts&&... objs)
-{
-    auto tmp = {objs...};
-    m.emplace(k, tmp);
-}
-
 } // namespace miopen
+
+#endif

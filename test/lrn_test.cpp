@@ -183,7 +183,8 @@ struct verify_lrn_bwd
                     {
                         for(auto j = top; j < bottom; j++)
                         {
-                            ydy += (inputY(b, c, j, i) * inputDY(b, c, j, i) / scale(b, c, j, i));
+                            ydy += (double(inputY(b, c, j, i) * inputDY(b, c, j, i)) /
+                                    double(scale(b, c, j, i)));
                         }
                     }
 
@@ -204,7 +205,8 @@ struct verify_lrn_bwd
 
                     for(auto k = start; k < end; k++)
                     {
-                        ydy += (inputY(b, k, h, w) * inputDY(b, k, h, w) / scale(b, k, h, w));
+                        ydy += (double(inputY(b, k, h, w) * inputDY(b, k, h, w)) /
+                                double(scale(b, k, h, w)));
                     }
 
                     routputDX(b, c, h, w) = pow(scale(b, c, h, w), -beta) * inputDY(b, c, h, w) -
@@ -284,14 +286,24 @@ struct lrn_driver : test_driver
 
     void run()
     {
+        std::size_t n_batch, channels, height, width;
+        std::tie(n_batch, channels, height, width) = miopen::tien<4>(input.desc.GetLengths());
+        size_t total_mem  = 5 * input.desc.GetNumBytes(); // estimate based on backward pass
+        size_t device_mem = get_handle().GetGlobalMemorySize();
+        if(total_mem >= device_mem)
+        {
+            show_command();
+            std::cout << "Config requires " << total_mem
+                      << " Bytes to write all necessary tensors to GPU. GPU has " << device_mem
+                      << " Bytes of memory." << std::endl;
+            return;
+        }
+
         miopen::LRNDescriptor lrn{mode_lookup.at(miopen::ToUpper(mode)), n, {alpha, beta, k}};
 
         auto OutputDX   = input;
         auto fwd_output = verify(verify_lrn_foward<T>{lrn, input});
         auto out        = fwd_output.first;
-
-        std::size_t n_batch, channels, height, width;
-        std::tie(n_batch, channels, height, width) = miopen::tien<4>(input.desc.GetLengths());
 
         unsigned long max_value = miopen_type<T>{} == miopenHalf ? 5 : 17;
 

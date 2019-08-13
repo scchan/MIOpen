@@ -29,6 +29,7 @@
 
 #include <miopen/miopen.h>
 #include <half.hpp>
+#include <miopen/bfloat16.hpp>
 
 namespace miopen {
 
@@ -68,6 +69,22 @@ void visit_float(miopenDataType_t t, F f)
     case miopenHalf:
     {
         f(as_float<half_float::half>{});
+        break;
+    }
+    case miopenBFloat16:
+    {
+        f(as_float<bfloat16>{});
+        break;
+    }
+    case miopenInt8x4:
+    case miopenInt8:
+    {
+        f(as_float<int8_t>{});
+        break;
+    }
+    case miopenInt32:
+    {
+        f(as_float<int>{});
         break;
     }
     }

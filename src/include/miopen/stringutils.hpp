@@ -23,12 +23,15 @@
  * SOFTWARE.
  *
  *******************************************************************************/
-#ifndef GUARD_MIOPEN_REPLACE_HPP
-#define GUARD_MIOPEN_REPLACE_HPP
+#ifndef GUARD_MIOPEN_STRINGUTILS_HPP
+#define GUARD_MIOPEN_STRINGUTILS_HPP
 
 #include <algorithm>
 #include <numeric>
 #include <string>
+
+#define MIOPEN_STRINGIZE_1(...) #__VA_ARGS__
+#define MIOPEN_STRINGIZE(...) MIOPEN_STRINGIZE_1(__VA_ARGS__)
 
 namespace miopen {
 
@@ -65,7 +68,7 @@ inline std::string JoinStrings(Strings strings, std::string delim)
 }
 
 template <class F>
-inline std::string TransformString(std::string s, F f)
+static inline std::string TransformString(std::string s, F f)
 {
     std::transform(s.begin(), s.end(), s.begin(), f);
     return s;
@@ -91,4 +94,4 @@ inline std::string RemovePrefix(std::string s, std::string prefix)
 
 } // namespace miopen
 
-#endif
+#endif // GUARD_MIOPEN_STRINGUTILS_HPP

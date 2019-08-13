@@ -24,10 +24,13 @@
  *
  *******************************************************************************/
 
-#include <miopen/errors.hpp>
 #include <miopen/batch_norm.hpp>
-#include <cassert>
+#include <miopen/errors.hpp>
+#include <miopen/handle.hpp>
+#include <miopen/tensor.hpp>
+#include <miopen/visit_float.hpp>
 
+#include <cassert>
 #include <chrono>
 #include <iostream>
 
@@ -58,7 +61,8 @@ void DeriveBNTensorDescriptor(TensorDescriptor& derivedBnDesc,
         if(lengths.size() == 5)
             newlens[4] = lengths[4];
     }
-    derivedBnDesc = TensorDescriptor(xDesc.GetType(), newlens.data(), xDesc.GetSize());
+    derivedBnDesc =
+        TensorDescriptor(/* xDesc.GetType() */ miopenFloat, newlens.data(), xDesc.GetSize());
 }
 
 TensorDescriptor BuildReshaped4DTensorDescriptor(const miopen::TensorDescriptor& tDesc)
@@ -77,7 +81,7 @@ TensorDescriptor BuildReshaped4DTensorDescriptor(const miopen::TensorDescriptor&
 void profileSequence(Handle& handle, unsigned char select, float* ctime)
 {
 
-    double ktime = 0.;
+    float ktime = 0.;
     assert((select < 3) && "profileSequence case incorrect");
     switch(select)
     {

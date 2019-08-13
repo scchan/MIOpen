@@ -47,18 +47,24 @@
 #define MIO_BN_TEST_EXPAVGFACTOR 0.1
 #define MIO_BN_TEST_EPSILON 1e-5 // FLT_EPSILON
 #define MIO_BN_SP_TEST_DEBUG 0
+#define MIO_BN_USE_MIX_PREC 1
+#if MIO_BN_USE_MIX_PREC == 1
+#define PREC_TYPE float
+#else
+#define PREC_TYPE T
+#endif
 
 //****************************************************
 // FORWARD TRAIN
 //****************************************************
-template <class T>
+template <class T, class U>
 struct verify_forward_train_bn_spatial
 {
 
     const tensor<T> input;
-    const tensor<T> scale;
-    const tensor<T> shift;
-    std::tuple<tensor<T>, tensor<T>, tensor<T>, tensor<T>, tensor<T>> cpu() const
+    const tensor<U> scale;
+    const tensor<U> shift;
+    std::tuple<tensor<T>, tensor<U>, tensor<U>, tensor<U>, tensor<U>> cpu() const
     {
 
 #if(MIO_BN_TIME_EVERYTHING == 1)
@@ -77,29 +83,29 @@ struct verify_forward_train_bn_spatial
         std::tie(rs_n_batch, rs_channels, rs_height, rs_width) =
             miopen::tien<4>(derivedBnDesc.GetLengths());
 
-        tensor<T> runMean;
-        tensor<T> runVar;
+        tensor<U> runMean;
+        tensor<U> runVar;
 
         if(input.desc.GetType() == miopenFloat)
         {
-            runMean = tensor<T>{rs_n_batch, rs_channels, rs_height, rs_width}.generate(
+            runMean = tensor<U>{rs_n_batch, rs_channels, rs_height, rs_width}.generate(
                 tensor_elem_gen_integer{17});
-            runVar = tensor<T>{rs_n_batch, rs_channels, rs_height, rs_width}.generate(
+            runVar = tensor<U>{rs_n_batch, rs_channels, rs_height, rs_width}.generate(
                 tensor_elem_gen_integer{17});
         }
         else
         {
             srand(0);
-            runMean = tensor<T>{rs_n_batch, rs_channels, rs_height, rs_width};
-            runVar  = tensor<T>{rs_n_batch, rs_channels, rs_height, rs_width};
-            for(int i = 0; i < runMean.desc.GetElementSize(); i++)
+            runMean = tensor<U>{rs_n_batch, rs_channels, rs_height, rs_width};
+            runVar  = tensor<U>{rs_n_batch, rs_channels, rs_height, rs_width};
+            for(std::size_t i = 0; i < runMean.desc.GetElementSize(); i++)
             {
-                runMean[i] = (((rand() % 2) == 1) ? -1 : 1) * 1e-3 * T(rand() % 100);
-                runVar[i]  = 1e-3 * T(rand() % 100);
+                runMean[i] = (((rand() % 2) == 1) ? -1 : 1) * 1e-3 * U(rand() % 100);
+                runVar[i]  = 1e-3 * U(rand() % 100);
             }
         }
-        auto saveMean   = tensor<T>{rs_n_batch, rs_channels, rs_height, rs_width};
-        auto saveInvVar = tensor<T>{rs_n_batch, rs_channels, rs_height, rs_width};
+        auto saveMean   = tensor<U>{rs_n_batch, rs_channels, rs_height, rs_width};
+        auto saveInvVar = tensor<U>{rs_n_batch, rs_channels, rs_height, rs_width};
         auto out        = input;
         std::fill(out.begin(), out.end(), 0);
 
@@ -124,11 +130,11 @@ struct verify_forward_train_bn_spatial
 
 #if(MIO_HEIRARCH_SEL == 0)
             // process the batch per channel
-            for(int bidx = 0; bidx < n_batch; bidx++)
+            for(std::size_t bidx = 0; bidx < n_batch; bidx++)
             { // via mini_batch
-                for(int row = 0; row < height; row++)
+                for(std::size_t row = 0; row < height; row++)
                 { // via rows
-                    for(int column = 0; column < width; column++)
+                    for(std::size_t column = 0; column < width; column++)
                     { // via columns
                         // #1 calculate the mean
                         // iterating through the stack of images in the mini_batch
@@ -137,14 +143,14 @@ struct verify_forward_train_bn_spatial
                 }     // end for (row)
             }         // end for (n)
 #else
-            for (int row = 0; row < height; row++){ //via rows
-                for(int column = 0; column < width; column++){// via columns
-                    for (int bidx = 0; bidx < n_batch; bidx++){ //via mini_batch
+            for(std::size_t row = 0; row < height; row++){ //via rows
+                for(std::size_t column = 0; column < width; column++){// via columns
+                    for(std::size_t bidx = 0; bidx < n_batch; bidx++){ //via mini_batch
                         mean_accum_arr[row] += input(bidx,cidx,row,column);
                     }	
                 }// for (column)
             }// for (row)  
-            for(int i = 0; i<height; i++) mean_accum += mean_accum_arr[i];
+            for(std::size_t i = 0; i<height; i++) mean_accum += mean_accum_arr[i];
 #endif
             mean_accum /= nhw;
 
@@ -154,11 +160,11 @@ struct verify_forward_train_bn_spatial
 #if(MIO_HEIRARCH_SEL == 0)
             // #2 calculate the variances
             // sigma^2 = (1/batch_mean) * sum( (x_i - batch_mean)^2 )
-            for(int bidx = 0; bidx < n_batch; bidx++)
+            for(std::size_t bidx = 0; bidx < n_batch; bidx++)
             { // via mini_batch
-                for(int row = 0; row < height; row++)
+                for(std::size_t row = 0; row < height; row++)
                 { // via rows
-                    for(int column = 0; column < width; column++)
+                    for(std::size_t column = 0; column < width; column++)
                     { // via columns
                         // using out buffer as scratchpad
                         out(bidx, cidx, row, column) = elemStd =
@@ -169,15 +175,15 @@ struct verify_forward_train_bn_spatial
             }                                                              // end for(n)
 
 #else
-            for (int row = 0; row < height; row++){ //via rows
-                for(int column = 0; column < width; column++){// via columns
-                    for (int bidx = 0; bidx < n_batch; bidx++){ //via mini_batch
+            for(std::size_t row = 0; row < height; row++){ //via rows
+                for(std::size_t column = 0; column < width; column++){// via columns
+                    for(std::size_t bidx = 0; bidx < n_batch; bidx++){ //via mini_batch
                         out(bidx,cidx,row,column) = elemStd = input(bidx,cidx,row,column) - mean_accum;
                         variance_accum_arr[row] += elemStd*elemStd;
                     }	
                 }// for (column)
             }// for (row)  
-            for(int i = 0; i<height; i++) variance_accum += variance_accum_arr[i];
+            for(std::size_t i = 0; i<height; i++) variance_accum += variance_accum_arr[i];
 #endif
             variance_accum /= nhw; // (1/N)*sum{ (x_i - mean)^2 }
             // #3 add epsilon for numeric stability, sqr_root, and invert
@@ -185,11 +191,11 @@ struct verify_forward_train_bn_spatial
 
             // #4 apply the normalization
             // x_hat = (x_i - mean) / sqrt(variance_accum + epsilon)
-            for(int bidx = 0; bidx < n_batch; bidx++)
+            for(std::size_t bidx = 0; bidx < n_batch; bidx++)
             { // via mini_batch
-                for(int row = 0; row < height; row++)
+                for(std::size_t row = 0; row < height; row++)
                 { // via rows
-                    for(int column = 0; column < width; column++)
+                    for(std::size_t column = 0; column < width; column++)
                     { // via columns
                         // #5 Gamma and Beta adjust
                         // y_i = gamma*x_hat + beta
@@ -222,7 +228,7 @@ struct verify_forward_train_bn_spatial
         return std::make_tuple(out, runMean, runVar, saveMean, saveInvVar);
     }
 
-    std::tuple<tensor<T>, tensor<T>, tensor<T>, tensor<T>, tensor<T>> gpu() const
+    std::tuple<tensor<T>, tensor<U>, tensor<U>, tensor<U>, tensor<U>> gpu() const
     {
 
 #if(MIO_BN_TIME_EVERYTHING == 1)
@@ -245,30 +251,30 @@ struct verify_forward_train_bn_spatial
         std::tie(rs_n_batch, rs_channels, rs_height, rs_width) =
             miopen::tien<4>(derivedBnDesc.GetLengths());
 
-        tensor<T> runMean;
-        tensor<T> runVar;
+        tensor<U> runMean;
+        tensor<U> runVar;
 
         if(input.desc.GetType() == miopenFloat)
         {
-            runMean = tensor<T>{rs_n_batch, rs_channels, rs_height, rs_width}.generate(
+            runMean = tensor<U>{rs_n_batch, rs_channels, rs_height, rs_width}.generate(
                 tensor_elem_gen_integer{17});
-            runVar = tensor<T>{rs_n_batch, rs_channels, rs_height, rs_width}.generate(
+            runVar = tensor<U>{rs_n_batch, rs_channels, rs_height, rs_width}.generate(
                 tensor_elem_gen_integer{17});
         }
         else
         {
             srand(0);
-            runMean = tensor<T>{rs_n_batch, rs_channels, rs_height, rs_width};
-            runVar  = tensor<T>{rs_n_batch, rs_channels, rs_height, rs_width};
-            for(int i = 0; i < runMean.desc.GetElementSize(); i++)
+            runMean = tensor<U>{rs_n_batch, rs_channels, rs_height, rs_width};
+            runVar  = tensor<U>{rs_n_batch, rs_channels, rs_height, rs_width};
+            for(std::size_t i = 0; i < runMean.desc.GetElementSize(); i++)
             {
-                runMean[i] = (((rand() % 2) == 1) ? -1 : 1) * 1e-3 * T(rand() % 100);
-                runVar[i]  = 1e-3 * T(rand() % 100);
+                runMean[i] = (((rand() % 2) == 1) ? -1 : 1) * 1e-3 * U(rand() % 100);
+                runVar[i]  = 1e-3 * U(rand() % 100);
             }
         }
 
-        auto saveMean   = tensor<T>{rs_n_batch, rs_channels, rs_height, rs_width};
-        auto saveInvVar = tensor<T>{rs_n_batch, rs_channels, rs_height, rs_width};
+        auto saveMean   = tensor<U>{rs_n_batch, rs_channels, rs_height, rs_width};
+        auto saveInvVar = tensor<U>{rs_n_batch, rs_channels, rs_height, rs_width};
 
         // in buffers
         auto in_dev    = handle.Write(input.data);
@@ -278,8 +284,8 @@ struct verify_forward_train_bn_spatial
         // out buffers
         auto runMean_dev    = handle.Write(runMean.data);
         auto runVar_dev     = handle.Write(runVar.data);
-        auto saveMean_dev   = handle.Create<T>(channels);
-        auto saveInvVar_dev = handle.Create<T>(channels);
+        auto saveMean_dev   = handle.Create<U>(channels);
+        auto saveInvVar_dev = handle.Create<U>(channels);
         auto out_dev        = handle.Create<T>(n_batch * channels * height * width);
 
         double epsilon      = MIO_BN_TEST_EPSILON;
@@ -306,10 +312,10 @@ struct verify_forward_train_bn_spatial
                                          saveMean_dev.get(),
                                          saveInvVar_dev.get());
 
-        saveMean.data   = handle.Read<T>(saveMean_dev, saveMean.data.size());
-        saveInvVar.data = handle.Read<T>(saveInvVar_dev, saveInvVar.data.size());
-        runMean.data    = handle.Read<T>(runMean_dev, runMean.data.size());
-        runVar.data     = handle.Read<T>(runVar_dev, runVar.data.size());
+        saveMean.data   = handle.Read<U>(saveMean_dev, saveMean.data.size());
+        saveInvVar.data = handle.Read<U>(saveInvVar_dev, saveInvVar.data.size());
+        runMean.data    = handle.Read<U>(runMean_dev, runMean.data.size());
+        runVar.data     = handle.Read<U>(runVar_dev, runVar.data.size());
         out.data        = handle.Read<T>(out_dev, out.data.size());
 
 #if(MIO_BN_TIME_EVERYTHING == 1)
@@ -346,13 +352,13 @@ struct verify_forward_train_bn_spatial
 //****************************************************
 // FORWARD INFERENCE
 //****************************************************
-template <class T>
+template <class T, class U>
 struct verify_forward_infer_bn_spatial_recalc
 {
 
     const tensor<T> input;
-    const tensor<T> scale;
-    const tensor<T> shift;
+    const tensor<U> scale;
+    const tensor<U> shift;
 
     tensor<T> cpu() const
     {
@@ -380,12 +386,12 @@ struct verify_forward_infer_bn_spatial_recalc
             double invVar         = 0.;
 
             // process the batch per channel
-            for(int row = 0; row < height; row++)
+            for(std::size_t row = 0; row < height; row++)
             { // via rows
-                for(int column = 0; column < width; column++)
+                for(std::size_t column = 0; column < width; column++)
                 { // via columns
                     // #1 calculate the mean
-                    for(int bidx = 0; bidx < n_batch; bidx++)
+                    for(std::size_t bidx = 0; bidx < n_batch; bidx++)
                     { // via mini_batch
                         // iterating through the stack of images in the mini_batch
                         mean_accum += input(bidx, cidx, row, column);
@@ -398,11 +404,11 @@ struct verify_forward_infer_bn_spatial_recalc
             variance_accum = 0.;
             // #2 calculate the variances
             // sigma^2 = (1/batch_mean) * sum( (x_i - batch_mean)^2 )
-            for(int row = 0; row < height; row++)
+            for(std::size_t row = 0; row < height; row++)
             { // via rows
-                for(int column = 0; column < width; column++)
+                for(std::size_t column = 0; column < width; column++)
                 { // via columns
-                    for(int bidx = 0; bidx < n_batch; bidx++)
+                    for(std::size_t bidx = 0; bidx < n_batch; bidx++)
                     { // via mini_batch
                         // using out buffer as scratchpad
                         out(bidx, cidx, row, column) = elemStd =
@@ -418,11 +424,11 @@ struct verify_forward_infer_bn_spatial_recalc
 
             // #4 apply the normalization
             // x_hat = (x_i - mean) / sqrt(variance_accum - epsilon)
-            for(int row = 0; row < height; row++)
+            for(std::size_t row = 0; row < height; row++)
             { // via rows
-                for(int column = 0; column < width; column++)
+                for(std::size_t column = 0; column < width; column++)
                 { // via columns
-                    for(int bidx = 0; bidx < n_batch; bidx++)
+                    for(std::size_t bidx = 0; bidx < n_batch; bidx++)
                     { // via mini_batch
                         elemStd =
                             out(bidx, cidx, row, column); // using saved values from output tensor
@@ -498,15 +504,15 @@ struct verify_forward_infer_bn_spatial_recalc
     }
 };
 
-template <class T>
+template <class T, class U>
 struct verify_forward_infer_bn_spatial_use_est
 {
 
     const tensor<T> input;
-    const tensor<T> scale;
-    const tensor<T> shift;
-    const tensor<T> estMean;
-    const tensor<T> estVar;
+    const tensor<U> scale;
+    const tensor<U> shift;
+    const tensor<U> estMean;
+    const tensor<U> estVar;
     tensor<T> cpu() const
     {
 
@@ -530,11 +536,11 @@ struct verify_forward_infer_bn_spatial_use_est
             double invVar   = 1.0 / sqrt(variance + epsilon);
 
             // process the batch per channel
-            for(int bidx = 0; bidx < n_batch; bidx++)
+            for(std::size_t bidx = 0; bidx < n_batch; bidx++)
             { // via mini_batch
-                for(int row = 0; row < height; row++)
+                for(std::size_t row = 0; row < height; row++)
                 { // via rows
-                    for(int column = 0; column < width; column++)
+                    for(std::size_t column = 0; column < width; column++)
                     { // via columns
 
                         elemStd = input(bidx, cidx, row, column) - mean;
@@ -612,15 +618,15 @@ struct verify_forward_infer_bn_spatial_use_est
 //****************************************************
 // BACKWARDS PROPAGATION
 //****************************************************
-template <class T>
+template <class T, class U>
 struct verify_backward_bn_spatial_recalc
 {
 
     const tensor<T> x_input;
     const tensor<T> dy_input;
-    const tensor<T> scale;
+    const tensor<U> scale;
 
-    std::tuple<tensor<T>, tensor<T>, tensor<T>> cpu() const
+    std::tuple<tensor<T>, tensor<U>, tensor<U>> cpu() const
     {
 
 #if(MIO_BN_TIME_EVERYTHING == 1)
@@ -640,10 +646,10 @@ struct verify_backward_bn_spatial_recalc
         auto dx_out = tensor<T>{n_batch, channels, height, width};
         std::fill(dx_out.begin(), dx_out.end(), 0);
 
-        auto dscale = tensor<T>{ss_n_batch, ss_channels, ss_height, ss_width};
+        auto dscale = tensor<U>{ss_n_batch, ss_channels, ss_height, ss_width};
         std::fill(dscale.begin(), dscale.end(), 0);
 
-        auto dshift = tensor<T>{ss_n_batch, ss_channels, ss_height, ss_width};
+        auto dshift = tensor<U>{ss_n_batch, ss_channels, ss_height, ss_width};
         std::fill(dshift.begin(), dshift.end(), 0);
 
         const unsigned int in_cstride = height * width;
@@ -669,11 +675,11 @@ struct verify_backward_bn_spatial_recalc
 
 // process the batch per channel
 #if(MIO_HEIRARCH_SEL == 0)
-            for(int row = 0; row < height; row++)
+            for(std::size_t row = 0; row < height; row++)
             { // via rows
-                for(int column = 0; column < width; column++)
+                for(std::size_t column = 0; column < width; column++)
                 { // via columns
-                    for(int bidx = 0; bidx < n_batch; bidx++)
+                    for(std::size_t bidx = 0; bidx < n_batch; bidx++)
                     { // via mini_batch
                         // #1 calculate the mean
                         mean += x_input(bidx, cidx, row, column);
@@ -681,27 +687,27 @@ struct verify_backward_bn_spatial_recalc
                 } // for (column)
             }     // for (row)
 #else
-            for (int row = 0; row < height; row++){ //via rows
-                for(int column = 0; column < width; column++){// via columns
-                    for (int bidx = 0; bidx < n_batch; bidx++){ //via mini_batch
+            for(std::size_t row = 0; row < height; row++){ //via rows
+                for(std::size_t column = 0; column < width; column++){// via columns
+                    for(std::size_t bidx = 0; bidx < n_batch; bidx++){ //via mini_batch
                         mean_accum_arr[row] += x_input(bidx,cidx,row,column);
                     }	
                 }// for (column)
             }// for (row)  
-            for(int i = 0; i<height; i++) mean += mean_accum_arr[i];
+            for(std::size_t i = 0; i<height; i++) mean += mean_accum_arr[i];
 #endif
             mean /= nhw;
 
             elemStd  = 0.;
             variance = 0.;
 #if(MIO_HEIRARCH_SEL == 0)
-            for(int row = 0; row < height; row++)
+            for(std::size_t row = 0; row < height; row++)
             { // via rows
-                for(int column = 0; column < width; column++)
+                for(std::size_t column = 0; column < width; column++)
                 { // via columns
                     // #2 calculate the variances
                     // sigma^2 = (1/batch_mean) * sum( (x_i - batch_mean)^2 )
-                    for(int bidx = 0; bidx < n_batch; bidx++)
+                    for(std::size_t bidx = 0; bidx < n_batch; bidx++)
                     { // via mini_batch
                         // per (x-dims) channel load a block of data into LDS
                         elemStd = x_input(bidx, cidx, row, column) - mean; // (x_i - mean)
@@ -710,15 +716,15 @@ struct verify_backward_bn_spatial_recalc
                 }                                                          // for (column)
             }                                                              // for (row)
 #else
-            for (int row = 0; row < height; row++){ //via rows
-                for(int column = 0; column < width; column++){// via columns
-                    for (int bidx = 0; bidx < n_batch; bidx++){ //via mini_batch
+            for(std::size_t row = 0; row < height; row++){ //via rows
+                for(std::size_t column = 0; column < width; column++){// via columns
+                    for(std::size_t bidx = 0; bidx < n_batch; bidx++){ //via mini_batch
                         elemStd = x_input(bidx,cidx,row,column) - mean;
                         variance_accum_arr[row] += elemStd*elemStd;
                     }	
                 }// for (column)
             }// for (row)  
-            for(int i = 0; i<height; i++) variance += variance_accum_arr[i];
+            for(std::size_t i = 0; i<height; i++) variance += variance_accum_arr[i];
 #endif
             variance /= nhw; // (1/(N*H*W))*sum{ (x_i - mean)^2 }
             invVar = 1. / double(sqrt(variance + epsilon));
@@ -726,11 +732,11 @@ struct verify_backward_bn_spatial_recalc
             dscale(0, cidx, 0, 0) = 0.;
 
 #if(MIO_HEIRARCH_SEL == 0)
-            for(int row = 0; row < height; row++)
+            for(std::size_t row = 0; row < height; row++)
             { // via rows
-                for(int column = 0; column < width; column++)
+                for(std::size_t column = 0; column < width; column++)
                 { // via columns
-                    for(int bidx = 0; bidx < n_batch; bidx++)
+                    for(std::size_t bidx = 0; bidx < n_batch; bidx++)
                     { // via mini_batch
                         xhat_index = in_cstride * bidx + (width * row + column);
                         // per (x-dims) channel load a block of data into LDS
@@ -744,9 +750,9 @@ struct verify_backward_bn_spatial_recalc
             }         // for (row)
 #else   
             
-            for (int row = 0; row < height; row++){ //via rows
-                for(int column = 0; column < width; column++){// via columns
-                    for (int bidx = 0; bidx < n_batch; bidx++){ //via mini_batch
+            for(std::size_t row = 0; row < height; row++){ //via rows
+                for(std::size_t column = 0; column < width; column++){// via columns
+                    for(std::size_t bidx = 0; bidx < n_batch; bidx++){ //via mini_batch
                         xhat_index = in_cstride*bidx + (width*row + column);
                         //per (x-dims) channel load a block of data into LDS
                         elemStd             = x_input(bidx,cidx,row,column) - mean;// (x_i - mean)
@@ -759,17 +765,17 @@ struct verify_backward_bn_spatial_recalc
                     }	
                 }// for (column)
             }// for (row)  
-            for(int i = 0; i<height; i++) {
+            for(std::size_t i = 0; i<height; i++) {
                 dshift(0,cidx,0,0) += dshift_accum_arr[i];    
                 dscale(0,cidx,0,0) += dscale_accum_arr[i];    
             }
 #endif
 
-            for(int row = 0; row < height; row++)
+            for(std::size_t row = 0; row < height; row++)
             { // via rows
-                for(int column = 0; column < width; column++)
+                for(std::size_t column = 0; column < width; column++)
                 { // via columns
-                    for(int bidx = 0; bidx < n_batch; bidx++)
+                    for(std::size_t bidx = 0; bidx < n_batch; bidx++)
                     { // via mini_batch
                         xhat_index = in_cstride * bidx + (width * row + column);
 
@@ -794,7 +800,7 @@ struct verify_backward_bn_spatial_recalc
         return std::make_tuple(dx_out, dscale, dshift);
     }
 
-    std::tuple<tensor<T>, tensor<T>, tensor<T>> gpu() const
+    std::tuple<tensor<T>, tensor<U>, tensor<U>> gpu() const
     {
 #if(MIO_BN_TIME_EVERYTHING == 1)
         auto t_start = std::chrono::high_resolution_clock::now();
@@ -813,10 +819,10 @@ struct verify_backward_bn_spatial_recalc
         std::tie(ss_n_batch, ss_channels, ss_height, ss_width) =
             miopen::tien<4>(derivedBnDesc.GetLengths());
 
-        auto dscale = tensor<T>{ss_n_batch, ss_channels, ss_height, ss_width};
+        auto dscale = tensor<U>{ss_n_batch, ss_channels, ss_height, ss_width};
         std::fill(dscale.begin(), dscale.end(), 0);
 
-        auto dshift = tensor<T>{ss_n_batch, ss_channels, ss_height, ss_width};
+        auto dshift = tensor<U>{ss_n_batch, ss_channels, ss_height, ss_width};
         std::fill(dshift.begin(), dshift.end(), 0);
 
         float alpha = 1.0;
@@ -852,8 +858,8 @@ struct verify_backward_bn_spatial_recalc
                                   nullptr);
 
         dx_out.data = handle.Read<T>(dx_out_dev, dx_out.data.size());
-        dscale.data = handle.Read<T>(dscale_dev, dscale.data.size());
-        dshift.data = handle.Read<T>(dshift_dev, dshift.data.size());
+        dscale.data = handle.Read<U>(dscale_dev, dscale.data.size());
+        dshift.data = handle.Read<U>(dshift_dev, dshift.data.size());
 
 #if(MIO_BN_TIME_EVERYTHING == 1)
         auto t_end = std::chrono::high_resolution_clock::now();
@@ -882,16 +888,16 @@ struct verify_backward_bn_spatial_recalc
     }
 };
 
-template <class T>
+template <class T, class U>
 struct verify_backward_bn_spatial_use_saved
 {
 
     const tensor<T> x_input;
     const tensor<T> dy_input;
-    const tensor<T> scale;
-    const tensor<T> savedMean;
-    const tensor<T> savedInvVar;
-    std::tuple<tensor<T>, tensor<T>, tensor<T>> cpu() const
+    const tensor<U> scale;
+    const tensor<U> savedMean;
+    const tensor<U> savedInvVar;
+    std::tuple<tensor<T>, tensor<U>, tensor<U>> cpu() const
     {
 
 #if(MIO_BN_TIME_EVERYTHING == 1)
@@ -910,10 +916,10 @@ struct verify_backward_bn_spatial_use_saved
         std::tie(ss_n_batch, ss_channels, ss_height, ss_width) =
             miopen::tien<4>(derivedBnDesc.GetLengths());
 
-        auto dscale = tensor<T>{ss_n_batch, ss_channels, ss_height, ss_width};
+        auto dscale = tensor<U>{ss_n_batch, ss_channels, ss_height, ss_width};
         std::fill(dscale.begin(), dscale.end(), 0);
 
-        auto dshift = tensor<T>{ss_n_batch, ss_channels, ss_height, ss_width};
+        auto dshift = tensor<U>{ss_n_batch, ss_channels, ss_height, ss_width};
         std::fill(dshift.begin(), dshift.end(), 0);
 
         const unsigned int in_cstride = height * width;
@@ -938,11 +944,11 @@ struct verify_backward_bn_spatial_use_saved
             dscale(0, cidx, 0, 0) = 0.;
 
 #if(MIO_HEIRARCH_SEL == 0)
-            for(int row = 0; row < height; row++)
+            for(std::size_t row = 0; row < height; row++)
             { // via rows
-                for(int column = 0; column < width; column++)
+                for(std::size_t column = 0; column < width; column++)
                 { // via columns
-                    for(int bidx = 0; bidx < n_batch; bidx++)
+                    for(std::size_t bidx = 0; bidx < n_batch; bidx++)
                     { // via mini_batch
                         xhat_index = in_cstride * bidx + (width * row + column);
                         // per (x-dims) channel load a block of data into LDS
@@ -956,9 +962,9 @@ struct verify_backward_bn_spatial_use_saved
             }         // for (row)
 #else   
             
-            for (int row = 0; row < height; row++){ //via rows
-                for(int column = 0; column < width; column++){// via columns
-                    for (int bidx = 0; bidx < n_batch; bidx++){ //via mini_batch
+            for(std::size_t row = 0; row < height; row++){ //via rows
+                for(std::size_t column = 0; column < width; column++){// via columns
+                    for(std::size_t bidx = 0; bidx < n_batch; bidx++){ //via mini_batch
                         xhat_index = in_cstride*bidx + (width*row + column);
                         //per (x-dims) channel load a block of data into LDS
                         elemStd             = x_input(bidx,cidx,row,column) - mean;// (x_i - mean)
@@ -971,17 +977,17 @@ struct verify_backward_bn_spatial_use_saved
                     }	
                 }// for (column)
             }// for (row)  
-            for(int i = 0; i<height; i++) {
+            for(std::size_t i = 0; i<height; i++) {
                 dshift(0,cidx,0,0) += dshift_accum_arr[i];    
                 dscale(0,cidx,0,0) += dscale_accum_arr[i];    
             }
 #endif
 
-            for(int row = 0; row < height; row++)
+            for(std::size_t row = 0; row < height; row++)
             { // via rows
-                for(int column = 0; column < width; column++)
+                for(std::size_t column = 0; column < width; column++)
                 { // via columns
-                    for(int bidx = 0; bidx < n_batch; bidx++)
+                    for(std::size_t bidx = 0; bidx < n_batch; bidx++)
                     { // via mini_batch
                         xhat_index = in_cstride * bidx + (width * row + column);
 
@@ -1004,7 +1010,7 @@ struct verify_backward_bn_spatial_use_saved
         return std::make_tuple(dx_out, dscale, dshift);
     }
 
-    std::tuple<tensor<T>, tensor<T>, tensor<T>> gpu() const
+    std::tuple<tensor<T>, tensor<U>, tensor<U>> gpu() const
     {
 
 #if(MIO_BN_TIME_EVERYTHING == 1)
@@ -1024,10 +1030,10 @@ struct verify_backward_bn_spatial_use_saved
         std::tie(ss_n_batch, ss_channels, ss_height, ss_width) =
             miopen::tien<4>(derivedBnDesc.GetLengths());
 
-        auto dscale = tensor<T>{ss_n_batch, ss_channels, ss_height, ss_width};
+        auto dscale = tensor<U>{ss_n_batch, ss_channels, ss_height, ss_width};
         std::fill(dscale.begin(), dscale.end(), 0);
 
-        auto dshift = tensor<T>{ss_n_batch, ss_channels, ss_height, ss_width};
+        auto dshift = tensor<U>{ss_n_batch, ss_channels, ss_height, ss_width};
         std::fill(dshift.begin(), dshift.end(), 0);
 
         float alpha = 1.0;
@@ -1065,8 +1071,8 @@ struct verify_backward_bn_spatial_use_saved
                                   savedInvVar_dev.get());
 
         dx_out.data = handle.Read<T>(dx_out_dev, dx_out.data.size());
-        dscale.data = handle.Read<T>(dscale_dev, dscale.data.size());
-        dshift.data = handle.Read<T>(dshift_dev, dshift.data.size());
+        dscale.data = handle.Read<U>(dscale_dev, dscale.data.size());
+        dshift.data = handle.Read<U>(dshift_dev, dshift.data.size());
 
 #if(MIO_BN_TIME_EVERYTHING == 1)
         auto t_end = std::chrono::high_resolution_clock::now();
@@ -1102,8 +1108,8 @@ template <class T>
 struct batch_norm_spatial_driver : test_driver
 {
     tensor<T> input;
-    tensor<T> scale;
-    tensor<T> shift;
+    tensor<PREC_TYPE> scale;
+    tensor<PREC_TYPE> shift;
     batch_norm_spatial_driver()
     {
         this->batch_factor = 4;
@@ -1117,11 +1123,11 @@ struct batch_norm_spatial_driver : test_driver
 
     void run()
     {
-
         std::size_t n, c, h, w;
         std::tie(n, c, h, w) = miopen::tien<4>(input.desc.GetLengths());
 
-        if(n == 1 || ((h * w > 1024) && (input.desc.GetType() == miopenHalf)) ||
+        if(n == 1 ||
+           ((h * w > 1024) && (input.desc.GetType() == miopenHalf) && (MIO_BN_USE_MIX_PREC == 0)) ||
            (n == 128 && c == 16 && h == 32 && w == 32)) // \todo DLOWELL: This last condtion is
                                                         // needed to get half test to pass. Batch
                                                         // norm needs rewriting for fp16.
@@ -1136,20 +1142,20 @@ struct batch_norm_spatial_driver : test_driver
 
         if(input.desc.GetType() == miopenFloat)
         {
-            scale = tensor<T>{ssn, ssc, ssh, ssw}.generate(tensor_elem_gen_integer{17});
-            shift = tensor<T>{ssn, ssc, ssh, ssw}.generate(tensor_elem_gen_integer{17});
+            scale = tensor<PREC_TYPE>{ssn, ssc, ssh, ssw}.generate(tensor_elem_gen_integer{17});
+            shift = tensor<PREC_TYPE>{ssn, ssc, ssh, ssw}.generate(tensor_elem_gen_integer{17});
         }
         else
         {
             srand(0);
-            scale = tensor<T>{ssn, ssc, ssh, ssw};
-            shift = tensor<T>{ssn, ssc, ssh, ssw};
-            for(int i = 0; i < scale.desc.GetElementSize(); i++)
+            scale = tensor<PREC_TYPE>{ssn, ssc, ssh, ssw};
+            shift = tensor<PREC_TYPE>{ssn, ssc, ssh, ssw};
+            for(std::size_t i = 0; i < scale.desc.GetElementSize(); i++)
             {
-                scale[i] = (((rand() % 2) == 1) ? -1 : 1) * 1e-4 * T(rand() % 100);
-                shift[i] = (((rand() % 2) == 1) ? -1 : 1) * 1e-4 * T(rand() % 100);
+                scale[i] = (((rand() % 2) == 1) ? -1 : 1) * 1e-4 * PREC_TYPE(rand() % 100);
+                shift[i] = (((rand() % 2) == 1) ? -1 : 1) * 1e-4 * PREC_TYPE(rand() % 100);
             }
-            for(int i = 0; i < input.desc.GetElementSize(); i++)
+            for(std::size_t i = 0; i < input.desc.GetElementSize(); i++)
             {
                 input[i] = (((rand() % 2) == 1) ? -1 : 1) * (1e-5 * T(rand() % 100));
             }
@@ -1159,7 +1165,7 @@ struct batch_norm_spatial_driver : test_driver
 #if(MIO_BN_SP_TEST_DEBUG == 1)
         std::cout << "Running forward train spatial with R and S set." << std::endl;
 #endif
-        auto outpair = verify(verify_forward_train_bn_spatial<T>{input, scale, shift});
+        auto outpair = verify(verify_forward_train_bn_spatial<T, PREC_TYPE>{input, scale, shift});
 // returns:  std::make_tuple(out,runMean,runVar,saveMean,saveInvVar);
 
 // inference recalc
@@ -1171,7 +1177,7 @@ struct batch_norm_spatial_driver : test_driver
         // std::fill(input.begin(), input.end(), 1);
         // std::fill(scale.begin(), scale.end(), 1);
         // std::fill(shift.begin(), shift.end(), 1);
-        verify(verify_forward_infer_bn_spatial_recalc<T>{input, scale, shift});
+        verify(verify_forward_infer_bn_spatial_recalc<T, PREC_TYPE>{input, scale, shift});
 
         // inference use estimated running values
         auto estMean = std::get<1>(outpair.second);
@@ -1179,17 +1185,18 @@ struct batch_norm_spatial_driver : test_driver
 #if(MIO_BN_SP_TEST_DEBUG == 1)
         std::cout << "Running forward inference spatial with R set." << std::endl;
 #endif
-        verify(verify_forward_infer_bn_spatial_use_est<T>{input, scale, shift, estMean, estVar});
+        verify(verify_forward_infer_bn_spatial_use_est<T, PREC_TYPE>{
+            input, scale, shift, estMean, estVar});
 
         // backprop recalc
         auto dy_input = std::get<0>(outpair.second);
-        for(int bidx = 0; bidx < n; bidx++)
+        for(std::size_t bidx = 0; bidx < n; bidx++)
         { // via mini_batch
-            for(int cidx = 0; cidx < c; cidx++)
+            for(std::size_t cidx = 0; cidx < c; cidx++)
             { // via mini_batch
-                for(int row = 0; row < h; row++)
+                for(std::size_t row = 0; row < h; row++)
                 { // via rows
-                    for(int column = 0; column < w; column++)
+                    for(std::size_t column = 0; column < w; column++)
                     {
                         dy_input(bidx, cidx, row, column) *= 0.1;
                     }
@@ -1197,9 +1204,10 @@ struct batch_norm_spatial_driver : test_driver
             }
         }
 #if(MIO_BN_SP_TEST_DEBUG == 2)
-        auto debugvals = verify(verify_backward_bn_spatial_recalc<T>{input, dy_input, scale});
-        auto gpuout    = std::get<0>(debugvals.second);
-        auto cpuout    = std::get<0>(debugvals.first);
+        auto debugvals =
+            verify(verify_backward_bn_spatial_recalc<T, PREC_TYPE>{input, dy_input, scale});
+        auto gpuout = std::get<0>(debugvals.second);
+        auto cpuout = std::get<0>(debugvals.first);
 
         double maxdiff = 0.;
         int mn         = 0;
@@ -1207,13 +1215,13 @@ struct batch_norm_spatial_driver : test_driver
         int mh         = 0;
         int mw         = 0;
 
-        for(int bidx = 0; bidx < n; bidx++)
+        for(std::size_t bidx = 0; bidx < n; bidx++)
         { // via mini_batch
-            for(int cidx = 0; cidx < c; cidx++)
+            for(std::size_t cidx = 0; cidx < c; cidx++)
             { // via mini_batch
-                for(int row = 0; row < h; row++)
+                for(std::size_t row = 0; row < h; row++)
                 { // via rows
-                    for(int column = 0; column < w; column++)
+                    for(std::size_t column = 0; column < w; column++)
                     { // via columns
                         double diff =
                             fabs(gpuout(bidx, cidx, row, column) - cpuout(bidx, cidx, row, column));
@@ -1250,7 +1258,7 @@ struct batch_norm_spatial_driver : test_driver
         std::cout << "Running back propagation spatial recalc." << std::endl;
 #endif
         this->tolerance = 80 * input.desc.GetElementSize();
-        verify(verify_backward_bn_spatial_recalc<T>{input, dy_input, scale});
+        verify(verify_backward_bn_spatial_recalc<T, PREC_TYPE>{input, dy_input, scale});
 #endif
 
         // backprop use saved values
@@ -1259,7 +1267,7 @@ struct batch_norm_spatial_driver : test_driver
 
 #if(MIO_BN_SP_TEST_DEBUG == 3)
 
-        auto debugvals = verify(verify_backward_bn_spatial_use_saved<T>{
+        auto debugvals = verify(verify_backward_bn_spatial_use_saved<T, PREC_TYPE>{
             input, dy_input, scale, savedMean, savedInvVar});
         auto gpuout = std::get<0>(debugvals.second);
         auto cpuout = std::get<0>(debugvals.first);
@@ -1270,13 +1278,13 @@ struct batch_norm_spatial_driver : test_driver
         int mh         = 0;
         int mw         = 0;
 
-        for(int bidx = 0; bidx < n; bidx++)
+        for(std::size_t bidx = 0; bidx < n; bidx++)
         { // via mini_batch
-            for(int cidx = 0; cidx < c; cidx++)
+            for(std::size_t cidx = 0; cidx < c; cidx++)
             { // via mini_batch
-                for(int row = 0; row < h; row++)
+                for(std::size_t row = 0; row < h; row++)
                 { // via rows
-                    for(int column = 0; column < w; column++)
+                    for(std::size_t column = 0; column < w; column++)
                     { // via columns
                         double diff =
                             fabs(gpuout(bidx, cidx, row, column) - cpuout(bidx, cidx, row, column));
@@ -1312,7 +1320,7 @@ struct batch_norm_spatial_driver : test_driver
 #if(MIO_BN_SP_TEST_DEBUG == 1)
         std::cout << "Running back propagation spatial with S set." << std::endl;
 #endif
-        verify(verify_backward_bn_spatial_use_saved<T>{
+        verify(verify_backward_bn_spatial_use_saved<T, PREC_TYPE>{
             input, dy_input, scale, savedMean, savedInvVar});
 #endif
     }

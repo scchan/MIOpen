@@ -1,19 +1,19 @@
 /*******************************************************************************
- * 
+ *
  * MIT License
- * 
+ *
  * Copyright (c) 2017 Advanced Micro Devices, Inc.
- * 
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
  * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
  * copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
- * 
+ *
  * The above copyright notice and this permission notice shall be included in all
  * copies or substantial portions of the Software.
- * 
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -21,7 +21,7 @@
  * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
- * 
+ *
  *******************************************************************************/
 .include "inst_wrappers.inc"
 
@@ -58,29 +58,7 @@ gid_z = 4
 .set out_ptr_off, 0x30
 .set dbg_ptr_off, 0x38
 
-
-.macro default symbol, value
-   .ifnotdef \symbol
-      \symbol = \value
-   .endif
-   .if \symbol < 0
-      .error "\symbol is negative"
-      // reset to default - quiet further error messages
-      \symbol = \value
-   .endif
-.endm
-
-.macro static_assert fufufu
-   .if !\fufufu
-      .error "\fufufu is false"
-   .endif
-.endm
-
-.macro swap a, b
-   __tmp = \a
-   \a = \b
-   \b = __tmp
-.endm
+.include "common.inc"
 
 default c_per_wave, 4
 default k_per_wave, 4
@@ -90,6 +68,14 @@ default chunk_size, 16
 default reverse_inout, 0
 default weights_layout, 0
 default reverse_weights, 0
+
+default elements_in_dword, 1
+static_assert(elements_in_dword == 1 || elements_in_dword == 2)
+.if elements_in_dword == 2
+   static_assert ((batch_size % elements_in_dword) == 0)
+   static_assert (.option.machine_version_major >= 9)
+.endif
+vec_size = elements_in_dword
 
 .if reverse_inout
    static_assert (stride_h == 1 && stride_w == 1)
@@ -117,42 +103,10 @@ static_assert (n_per_group <= batch_size)
 static_assert (c_per_wave * chunk_size == 64)
 static_assert (k_per_wave * chunk_size <= 64)
 
-.macro log2 lg2, num, max_bits=8
-   \lg2 = 0
-   lg_i = \num
-   .rept \max_bits
-      lg_i = lg_i / 2
-      .if lg_i > 0
-         \lg2 = \lg2 + 1
-      .endif
-   .endr
-.endm
-
 log2 c_per_wave_log2, c_per_wave
 log2 k_per_wave_log2, k_per_wave
 
-
-// weights
-.set weights_per_filter, wei_w * wei_h
-.if weights_layout == 0 // KCHW
-   .set filter_c_stride, 4 * weights_per_filter
-   .set filter_k_stride, 4 * weights_per_filter * input_channels
-.else // CKHW
-   .set filter_c_stride, 4 * weights_per_filter * output_channels
-   .set filter_k_stride, 4 * weights_per_filter
-.endif
-.set filters_size, 4 * weights_per_filter * input_channels * output_channels
-
-
-// input/output
-out_w = (img_w + 2 * pad_w - wei_w) / stride_w + 1;
-out_h = (img_h + 2 * pad_h - wei_h) / stride_h + 1;
-input_line_size = 4 * img_w
-input_feature_map_size = input_line_size * img_h
-input_stack_size = input_feature_map_size * input_channels
-output_line_size = 4 * out_w
-output_feature_map_size = output_line_size * out_h
-output_stack_size = output_feature_map_size * output_channels
+.include "conv_sizes.inc"
 
 maxU24 = 1 << 24
 static_assert (filter_c_stride < maxU24)
@@ -160,12 +114,17 @@ static_assert (filter_k_stride < maxU24)
 static_assert (input_feature_map_size < maxU24)
 static_assert (output_feature_map_size < maxU24)
 
+w_half_in = img_w % elements_in_dword
+w_half_out = out_w % elements_in_dword
+img_w_vec = (img_w + elements_in_dword - 1) / elements_in_dword
+out_w_vec = (out_w + elements_in_dword - 1) / elements_in_dword
+
 // chunk parameters
 log2 chunk_size_log2, chunk_size
-chunks_in = (img_w + chunk_size - 1) / chunk_size
+chunks_in = (img_w_vec + chunk_size - 1) / chunk_size
 .if (chunk_size != 16)
    // force chunks to have enough zeros for padding
-   chunks_in = (img_w + chunk_size - pad_w - 1) / (chunk_size - pad_w)
+   chunks_in = (img_w_vec + chunk_size - pad_w - 1) / (chunk_size - pad_w)
 .endif
 .if (chunks_in % stride_w) && (chunks_in > 1)
    // force chunks to be aligned with stride
@@ -177,12 +136,12 @@ chunks_in = (img_w + chunk_size - 1) / chunk_size
 .else
    chunks_out = 1
 .endif
-active_in_lanes = (img_w + chunks_in - 1) / chunks_in // active lanes in chunk
-active_out_lanes = (out_w + chunks_out - 1) / chunks_out
+active_in_lanes = (img_w_vec + chunks_in - 1) / chunks_in // active lanes in chunk
+active_out_lanes = (out_w_vec + chunks_out - 1) / chunks_out
 static_assert (active_in_lanes == active_out_lanes || chunks_in == 1)
 active_lanes = active_in_lanes
-full_chunks_in = img_w % chunks_in
-full_chunks_out = out_w % chunks_out
+full_chunks_in = img_w_vec % chunks_in
+full_chunks_out = out_w_vec % chunks_out
 .if full_chunks_in == 0
    full_chunks_in = chunks_in
 .endif
@@ -193,8 +152,12 @@ partial_chunks_in = chunks_in - full_chunks_in
 partial_chunks_out = chunks_out - full_chunks_out
 mbufs_per_line_in = (full_chunks_in + 3) / 4 + (partial_chunks_in + 3) / 4 // memory buffer instructions per line
 mbufs_per_line_out = (full_chunks_out + 3) / 4 + (partial_chunks_out + 3) / 4 // memory buffer instructions per line
+mbufs_per_line_in = mbufs_per_line_in + w_half_in
+mbufs_per_line_out = mbufs_per_line_out + w_half_out
 gprs_per_line_in = full_chunks_in + partial_chunks_in
 gprs_per_line_out = full_chunks_out + partial_chunks_out
+gprs_per_batch_in = gprs_per_line_in * lines_cnt_in
+gprs_per_batch_out = gprs_per_line_out * lines_cnt_out
 
 
 static_assert ((chunk_size == 16) || (chunk_size == 64) || (active_lanes < chunk_size)) // 64 for future expansion
@@ -208,6 +171,9 @@ shift = chunk_size
    shift = shift * 2
 .endr
 
+static_assert(active_lanes_mask <= 0xffffffff)
+static_assert(partial_lanes_mask <= 0xffffffff)
+
 input_buffer_size = input_stack_size * batch_size
 output_buffer_size = output_stack_size * batch_size
 
@@ -217,22 +183,6 @@ output_buffer_size = output_stack_size * batch_size
    .set max_hw_vctn, 63
 .endif
 max_hw_lcnt = 15
-.macro s_wait vmcnt=max_hw_vctn, lgkmcnt=max_hw_lcnt
-   vm_cnt = \vmcnt
-   lgkm_cnt = \lgkmcnt
-   .if vm_cnt > max_hw_vctn
-      vm_cnt = max_hw_vctn
-   .elseif vm_cnt < 0
-      vm_cnt = 0
-   .endif
-   .if lgkm_cnt > max_hw_lcnt
-      lgkm_cnt = max_hw_lcnt
-   .elseif lgkm_cnt < 0
-      lgkm_cnt = 0
-   .endif
-   s_waitcnt vmcnt(0 + vm_cnt) & lgkmcnt(0 + lgkm_cnt)
-.endm
-
 
 .GPR_ALLOC_BEGIN
 .if limit_wave_cnt
@@ -246,10 +196,14 @@ max_hw_lcnt = 15
 .SGPR_ALLOC desc_in, 4 // input buffer descriptor
 .SGPR_ALLOC desc_out, 4   // weights buffer descriptor
 .SGPR_ALLOC desc_wei, 4   // output buffer descriptor
+.if k_group_size_is_power_of_two
+    .SGPR_ALLOC stmp
+.else
+    .SGPR_ALLOC stmp, 4
+.endif
 .SGPR_ALLOC loop_n_cnt
 .SGPR_ALLOC loop_h_cnt
 .SGPR_ALLOC wave_id // wave_id in group
-.SGPR_ALLOC stmp
 .SGPR_RESERVE_XNACK
 
 
@@ -264,9 +218,28 @@ accums_cnt = wei_w * wei_h * c_per_wave * k_per_wave * chunk_size / 64
 lines_cnt_in = pipe_lines_depth + wei_h - 1
 lines_cnt_out = (pipe_lines_depth + stride_h - 1) / stride_h
 .VGPR_ALLOC accums, accums_cnt
-.VGPR_ALLOC lines_in, gprs_per_line_in * lines_cnt_in
-.VGPR_ALLOC lines_out, gprs_per_line_out * lines_cnt_out
+.VGPR_ALLOC lines_in, gprs_per_line_in * lines_cnt_in * elements_in_dword
+.VGPR_ALLOC lines_out, gprs_per_line_out * lines_cnt_out * elements_in_dword
 .VGPR_ALLOC permute_addr
+.if elements_in_dword == 2
+   .VGPR_ALLOC shfl
+.endif
+
+.if k_group_size_is_power_of_two || gprs_per_line_in * lines_cnt_in * elements_in_dword >= 4
+    vtmp_udiv = lines_in
+.else
+    .VGPR_ALLOC vtmp_udiv, 4
+.endif
+
+.if k_group_size_is_power_of_two || gprs_per_line_out * lines_cnt_out * elements_in_dword >= 3
+    gid = lines_out
+    group_id = lines_out + 1
+    group_size = lines_out + 2
+.else
+    .VGPR_ALLOC gid
+    .VGPR_ALLOC group_id
+    .VGPR_ALLOC group_size
+.endif
 
 .LDS_ALLOC_FROM 0
 .LDS_ALLOC accums_lds, (n_per_group - 1) * 64 * 4 * accums_cnt
@@ -380,6 +353,44 @@ gcnAsmConv3x3WrW:
    s_mul_i32 s[stmp], s[gid_z], k_per_wave * filter_k_stride
    s_add_u32 s[soffset_wei], s[soffset_wei], s[stmp]
 
+   // calculate group offsets
+   static_assert(output_channels % (k_per_wave * group_counts) == 0)
+   static_assert(input_channels % (c_per_wave * group_counts) == 0)
+   .if reverse_inout
+       c_group_size = output_channels / k_per_wave / group_counts
+       k_group_size = input_channels / c_per_wave / group_counts
+       .if k_group_size_is_power_of_two
+           log2 k_group_size_log2, k_group_size
+           s_lshr_b32 s[stmp], s[gid_y], 0 + k_group_size_log2 // group_id
+       .else
+           v_mov_b32 v[gid], s[gid_y]
+           v_mov_b32 v[group_size], 0 + k_group_size
+           u32_div gid, group_size, group_id, vtmp_udiv, stmp
+           v_readfirstlane_b32 s[stmp], v[group_id]
+       .endif
+       s_mul_i32 s[stmp], s[stmp], c_group_size * k_per_wave * output_feature_map_size // k_group_offset
+       s_add_u32 s[soffset_out], s[soffset_out], s[stmp]
+   .else
+       k_group_size = output_channels / k_per_wave / group_counts
+       c_group_size = input_channels / c_per_wave / group_counts
+       .if k_group_size_is_power_of_two
+           log2 k_group_size_log2, k_group_size
+           s_lshr_b32 s[stmp], s[gid_z], 0 + k_group_size_log2 // group_id
+       .else
+           v_mov_b32 v[gid], s[gid_z]
+           v_mov_b32 v[group_size], 0 + k_group_size
+           u32_div gid, group_size, group_id, vtmp_udiv, stmp
+           v_readfirstlane_b32 s[stmp], v[group_id]
+       .endif
+       s_mul_i32 s[stmp], s[stmp], c_group_size * c_per_wave * input_feature_map_size // c_group_offset
+       s_add_u32 s[soffset_in], s[soffset_in], s[stmp]
+   .endif
+
+   .GPR_INVALIDATE gid
+   .GPR_INVALIDATE group_size
+   .GPR_INVALIDATE group_id
+   .GPR_INVALIDATE vtmp_udiv
+
    s_mov_b32 s[loop_n_cnt], 0
 
    .macro .single_vload base, v_offset, s_offset, desc, mbufs_inflight, count
@@ -409,30 +420,86 @@ gcnAsmConv3x3WrW:
       .endif
    .endm
 
+   .macro exch_vgpr, img_c0, img_c1
+      v_mov_b32 v[shfl], v[\img_c0]
+      v_mov_b32_sdwa v[\img_c0], v[\img_c1] dst_sel:WORD_1 src0_sel:WORD_0
+      v_mov_b32_sdwa v[\img_c1], v[shfl] dst_sel:WORD_0 src0_sel:WORD_1
+   .endm
+
+   .macro exch_line_f16 inout
+      .if elements_in_dword == 2
+         v_cnt = 0
+         line_base = lines_\inout + gprs_per_line_\inout * exch_line_\inout
+         .rept gprs_per_line_\inout
+            exch_vgpr line_base + v_cnt, line_base + v_cnt + gprs_per_batch_\inout
+            v_cnt = v_cnt + 1
+         .endr
+         exch_line_\inout = exch_line_\inout + 1
+         .if(exch_line_\inout == lines_cnt_\inout)
+            exch_line_\inout = 0
+         .endif
+      .endif
+   .endm
+
+   .macro exch_step_f16
+      .if g_line_exch < img_h
+          .if g_line_exch < img_h - 1
+             exch_line_f16 in
+          .endif
+          .if !(g_line_exch % stride_h)
+             exch_line_f16 out
+          .endif
+      .endif
+      g_line_exch = g_line_exch + 1
+   .endm
+
    .macro .load_line inout, line, mbufs_inflight, go_to_next_line = 1
-      vo = voffset_\inout
       so = soffset_\inout
-      desc = desc_\inout
-      vals_to_load = full_chunks_\inout
-      vals_loaded = 0
-      imm_off = 0
-      line_base = lines_\inout + gprs_per_line_\inout * \line
+      //reserve soffset
+      s_mov_b32 s[stmp], s[so]
+      n_cnt = 0
+      .rept elements_in_dword
+          vo = voffset_\inout
+          desc = desc_\inout
+          vals_to_load = full_chunks_\inout
+          vals_loaded = 0
+          imm_off = 0
+          line_base = lines_\inout + gprs_per_line_\inout * \line + n_cnt * gprs_per_batch_\inout
 
-      .rept (full_chunks_\inout / 4)
-         .single_vload line_base, vo, so, desc, \mbufs_inflight, 4
-      .endr
-      .single_vload line_base, vo, so, desc, \mbufs_inflight, 3
-      .single_vload line_base, vo, so, desc, \mbufs_inflight, 2
-      .single_vload line_base, vo, so, desc, \mbufs_inflight, 1
+          .rept (full_chunks_\inout / 4)
+             .single_vload line_base, vo, so, desc, \mbufs_inflight, 4
+          .endr
+          .single_vload line_base, vo, so, desc, \mbufs_inflight, 3
+          .single_vload line_base, vo, so, desc, \mbufs_inflight, 2
+          .single_vload line_base, vo, so, desc, \mbufs_inflight, 1
 
-      vals_to_load = partial_chunks_\inout
-      vo = voffset_part_\inout
-      .rept (partial_chunks_\inout / 4)
-         .single_vload line_base, vo, so, desc, \mbufs_inflight, 4
+          vals_to_load = partial_chunks_\inout
+          vo = voffset_part_\inout
+          .rept (partial_chunks_\inout / 4)
+             .single_vload line_base, vo, so, desc, \mbufs_inflight, 4
+          .endr
+          .single_vload line_base, vo, so, desc, \mbufs_inflight, 3
+          .single_vload line_base, vo, so, desc, \mbufs_inflight, 2
+          .single_vload line_base, vo, so, desc, \mbufs_inflight, 1
+
+          .if w_half_\inout
+             s_mov_b32 exec_lo, partial_lanes_mask
+             s_mov_b32 exec_hi, partial_lanes_mask
+             buffer_load_ushort v[line_base + vals_loaded - partial_chunks_\inout - 1], v[voffset_\inout], s[desc:desc+3], s[so] offen offset:0 + (vals_loaded - partial_chunks_\inout - 1) * 4
+             s_mov_b32 exec_lo, active_lanes_mask
+             s_mov_b32 exec_hi, active_lanes_mask
+          .endif
+
+         .if so == soffset_in
+            s_add_u32 s[so], s[so], 0 + input_stack_size * n_per_group
+         .else
+            s_add_u32 s[so], s[so], 0 + output_stack_size * n_per_group
+         .endif
+         n_cnt = n_cnt + 1
       .endr
-      .single_vload line_base, vo, so, desc, \mbufs_inflight, 3
-      .single_vload line_base, vo, so, desc, \mbufs_inflight, 2
-      .single_vload line_base, vo, so, desc, \mbufs_inflight, 1
+
+      //restore soffset
+      s_mov_b32 s[so], s[stmp]
 
       .if \go_to_next_line
          .next_line \inout, \line
@@ -443,6 +510,14 @@ gcnAsmConv3x3WrW:
          .endif
       .endif
    .endm
+
+   .if stride_w == 2
+      line_adjust = gprs_per_batch_in
+      line_adjust_1 = 1
+   .else
+      line_adjust = 0
+      line_adjust_1 = gprs_per_batch_in
+   .endif
 
    .macro conv_line in_line, out_line, acc_line, acc_batch, sync=0, swizzle=0
       in_base = lines_in + gprs_per_line_in * \in_line
@@ -462,25 +537,70 @@ gcnAsmConv3x3WrW:
                acc_off = acc_x
             .endif
             .if in_x < 0
-               v_mac_f32 v[acc_base + acc_off], v[in_base+gprs_per_line_in-1], v[out_base + out_x] row_shr:1 bound_ctrl:0
+               .if elements_in_dword == 2
+                  v_mov_b32 v[shfl], v[in_base + gprs_per_line_in - 1 + gprs_per_batch_in] row_shr:1 bound_ctrl:0
+                  v_dot2  acc_base + acc_off, shfl, out_base + out_x
+                  v_dot2  acc_base + acc_off, in_base + line_adjust, out_base + out_x + gprs_per_batch_out
+               .else
+                  v_mac_f32 v[acc_base + acc_off], v[in_base+gprs_per_line_in-1], v[out_base + out_x] row_shr:1 bound_ctrl:0
+               .endif
             .elseif in_x >= gprs_per_line_in
-               v_mac_f32 v[acc_base + acc_off], v[in_base], v[out_base + out_x] row_shl:1 bound_ctrl:0
+                  .if elements_in_dword == 2
+                     v_dot2  acc_base + acc_off, in_base + gprs_per_line_in - 1 + gprs_per_batch_in, out_base + out_x
+                     .if gprs_per_line_in == 1
+                         v_mov_b32 v[shfl], v[in_base + line_adjust] row_shl:1 bound_ctrl:0
+                     .else
+                         v_mov_b32 v[shfl], v[in_base] row_shl:1 bound_ctrl:0
+                     .endif
+                     v_dot2  acc_base + acc_off, shfl, out_base + out_x + gprs_per_batch_out
+               .else
+                  v_mac_f32 v[acc_base + acc_off], v[in_base], v[out_base + out_x] row_shl:1 bound_ctrl:0
+               .endif
             .else
-               v_mac_f32 v[acc_base + acc_off], v[in_base + in_x], v[out_base + out_x]
+               .if elements_in_dword == 2
+                  .if acc_x == 1
+                     v_dot2  acc_base + acc_off, in_base + in_x, out_base + out_x
+                     .if stride_w == 2 && gprs_per_line_in == 1
+                        v_mov_b32 v[shfl], v[in_base] row_shl:1 bound_ctrl:0
+                        v_dot2  acc_base + acc_off, shfl, out_base + out_x + gprs_per_batch_out
+                     .else
+                        v_dot2 acc_base + acc_off, in_base + in_x + line_adjust_1, out_base + out_x + gprs_per_batch_out
+                     .endif
+                  .elseif acc_x == 0
+                     v_dot2  acc_base + acc_off, in_base + in_x + gprs_per_batch_in, out_base + out_x
+                     v_dot2  acc_base + acc_off, in_base + in_x + 1 + line_adjust, out_base + out_x + gprs_per_batch_out
+                  .elseif acc_x == 2
+                     v_dot2  acc_base + acc_off, in_base + in_x - 1 + gprs_per_batch_in, out_base + out_x
+                     v_dot2  acc_base + acc_off, in_base + in_x + line_adjust, out_base + out_x + gprs_per_batch_out
+                  .else
+                     static_assert(0)
+                  .endif
+               .else
+                  v_mac_f32 v[acc_base + acc_off], v[in_base + in_x], v[out_base + out_x]
+               .endif
             .endif
             acc_x = acc_x + 1
          .endr
          .if \swizzle==32 // swaps each 32 lanes
             // lanes[ 0:31] <-> lanes[32:63]
             ds_bpermute_b32 v[out_base+out_x], v[permute_addr], v[out_base+out_x]
+            .if elements_in_dword == 2
+               ds_bpermute_b32 v[out_base+out_x+gprs_per_batch_out], v[permute_addr], v[out_base+out_x+gprs_per_batch_out]
+            .endif
          .elseif \swizzle==16  // swaps each 16 lanes
             // lanes[ 0:15] <-> lanes[16:31]
             // lanes[32:47] <-> lanes[48:63]
             ds_swizzle_b32 v[out_base+out_x], v[out_base+out_x] offset:0x401F
+            .if elements_in_dword == 2
+               ds_swizzle_b32 v[out_base+out_x+gprs_per_batch_out], v[out_base+out_x+gprs_per_batch_out] offset:0x401F
+            .endif
          .elseif \swizzle==8  // swaps each 8 lanes
             // lanes[0:7] <-> lanes[8:15]
             // ...
             ds_swizzle_b32 v[out_base+out_x], v[out_base+out_x] offset:0x201F
+            .if elements_in_dword == 2
+               ds_swizzle_b32 v[out_base+out_x+gprs_per_batch_out], v[out_base+out_x+gprs_per_batch_out] offset:0x201F
+            .endif
          .elseif \swizzle != 0
             .error "Wrong swizzle parameter"
          .endif
@@ -497,6 +617,9 @@ loop_n_begin: // loop over batch (n)
 
    g_line_conv = 0
    g_line_fetch = 0
+   g_line_exch = 0
+   exch_line_in = 0
+   exch_line_out = 0
    line_conv_in = lines_cnt_in - 1
    line_conv_out = 0
    line_fetch_in = 0
@@ -597,10 +720,12 @@ loop_n_begin: // loop over batch (n)
    .rept pipe_lines_depth-1
       fetch_step mbufs_cur
    .endr
-   vmcnt_per_step = mbufs_per_line_in + mbufs_per_line_out
+   vmcnt_per_step = (mbufs_per_line_in + mbufs_per_line_out) * elements_in_dword
 
    mbufs_piped = mbufs_cur - mbufs_1row
    s_wait mbufs_piped
+   exch_line_f16 in
+   exch_step_f16
    conv_step
 
    // software pipeline
@@ -618,6 +743,7 @@ loop_h_begin:
       .rept unroll_factor
          fetch_step mbufs_cur
          s_wait mbufs_piped
+         exch_step_f16
          conv_step
       .endr
       s_addk_i32 s[loop_h_cnt], 1
@@ -632,6 +758,7 @@ loop_h_end:
    .rept non_looped_pipelined_steps
       fetch_step mbufs_cur
       s_wait mbufs_piped
+      exch_step_f16
       conv_step
    .endr
 
@@ -641,14 +768,15 @@ loop_h_end:
    .rept pipe_lines_depth
       iii = iii + 1
       s_wait mbufs_piped - iii * vmcnt_per_step
+      exch_step_f16
       conv_step
    .endr
 
 
-   s_add_u32 s[soffset_in], s[soffset_in], 0 + input_stack_size * n_per_group - input_feature_map_size
-   s_add_u32 s[soffset_out], s[soffset_out], 0 + output_stack_size * n_per_group - output_feature_map_size
+   s_add_u32 s[soffset_in], s[soffset_in], 0 + input_stack_size * n_per_group * elements_in_dword - input_feature_map_size
+   s_add_u32 s[soffset_out], s[soffset_out], 0 + output_stack_size * n_per_group * elements_in_dword - output_feature_map_size
 loop_n_end:
-   s_addk_i32 s[loop_n_cnt], 1
+   s_addk_i32 s[loop_n_cnt], 0 + elements_in_dword
    s_cmpk_ge_u32 s[loop_n_cnt], 0 + (batch_size + n_per_group - 1) / n_per_group
    s_cbranch_scc0 loop_n_begin
 
@@ -748,9 +876,19 @@ last_wave:
    .macro store_accums acc
       static_assert (weights_per_filter == 9)
       acc_base = accums + \acc * weights_per_filter
-      buffer_store_dwordx4 v[acc_base+0:acc_base+3], v[voffset_wei], s[desc_wei:desc_wei+3], s[soffset_wei] offen offset:0
-      buffer_store_dwordx4 v[acc_base+4:acc_base+7], v[voffset_wei], s[desc_wei:desc_wei+3], s[soffset_wei] offen offset:0+4*4
-      buffer_store_dword v[acc_base+8], v[voffset_wei], s[desc_wei:desc_wei+3], s[soffset_wei] offen offset:0+8*4
+      .if elements_in_dword == 2
+         v_cvt_pkrtz_f16_f32 v[acc_base], v[acc_base], v[acc_base+1]
+         v_cvt_pkrtz_f16_f32 v[acc_base+1], v[acc_base+2], v[acc_base+3]
+         v_cvt_pkrtz_f16_f32 v[acc_base+2], v[acc_base+4], v[acc_base+5]
+         v_cvt_pkrtz_f16_f32 v[acc_base+3], v[acc_base+6], v[acc_base+7]
+         buffer_store_dwordx4 v[acc_base:acc_base+3], v[voffset_wei], s[desc_wei:desc_wei+3], s[soffset_wei] offen offset:0
+         v_cvt_f16_f32 v[acc_base+8], v[acc_base+8]
+         buffer_store_short v[acc_base+8], v[voffset_wei], s[desc_wei:desc_wei+3], s[soffset_wei] offen offset:0+4*4
+      .else
+         buffer_store_dwordx4 v[acc_base+0:acc_base+3], v[voffset_wei], s[desc_wei:desc_wei+3], s[soffset_wei] offen offset:0
+         buffer_store_dwordx4 v[acc_base+4:acc_base+7], v[voffset_wei], s[desc_wei:desc_wei+3], s[soffset_wei] offen offset:0+4*4
+         buffer_store_dword v[acc_base+8], v[voffset_wei], s[desc_wei:desc_wei+3], s[soffset_wei] offen offset:0+8*4
+      .endif
    .endm
 
    v_mbcnt_hi_u32_b32 v[tid_wei], exec_lo, 0
@@ -790,31 +928,7 @@ s_endpgm
 .error "ROCM_METADATA_VERSION must be defined"
 .endif
 
-.macro metadata wg_x
-  .if ROCM_METADATA_VERSION == 3
-    .amdgpu_code_object_metadata
-    { Version: [ 3, 0 ],
-        Kernels:
-        - { Name: gcnAsmConv3x3WrW, Language: OpenCL C, LanguageVersion: [ 1, 2 ],
-            Attrs:
-              { ReqdWorkGroupSize: [ \wg_x, 1, 1 ] }
-            Args:
-            - { Name: N       , Size: 4, Align: 4, ValueKind: ByValue, ValueType: I32, TypeName: 'int', AccQual: Default, IsConst: true }
-            - { Name: C       , Size: 4, Align: 4, ValueKind: ByValue, ValueType: I32, TypeName: 'int', AccQual: Default, IsConst: true }
-            - { Name: H       , Size: 4, Align: 4, ValueKind: ByValue, ValueType: I32, TypeName: 'int', AccQual: Default, IsConst: true }
-            - { Name: W       , Size: 4, Align: 4, ValueKind: ByValue, ValueType: I32, TypeName: 'int', AccQual: Default, IsConst: true }
-            - { Name: K       , Size: 4, Align: 4, ValueKind: ByValue, ValueType: I32, TypeName: 'int', AccQual: Default, IsConst: true }
-            - { Name: n_groups, Size: 4, Align: 4, ValueKind: ByValue, ValueType: I32, TypeName: 'int', AccQual: Default, IsConst: true }
-            - { Name: unused_0, Size: 4, Align: 4, ValueKind: ByValue, ValueType: I32, TypeName: 'int', AccQual: Default, IsConst: true }
-            - { Name: unused_1, Size: 4, Align: 4, ValueKind: ByValue, ValueType: I32, TypeName: 'int', AccQual: Default, IsConst: true }
-            - { Name: x       , Size: 8, Align: 8, ValueKind: GlobalBuffer, ValueType: F32, TypeName: 'float*', AddrSpaceQual: Global, AccQual: Default, IsConst: true }
-            - { Name: dw      , Size: 8, Align: 8, ValueKind: GlobalBuffer, ValueType: F32, TypeName: 'float*', AddrSpaceQual: Global, AccQual: Default }
-            - { Name: dy      , Size: 8, Align: 8, ValueKind: GlobalBuffer, ValueType: F32, TypeName: 'float*', AddrSpaceQual: Global, AccQual: Default, IsConst: true }
-            - { Name: ret_addr, Size: 8, Align: 8, ValueKind: GlobalBuffer, ValueType: I32, TypeName: 'int*'  , AddrSpaceQual: Global, AccQual: Default }
-          }
-    }
-    .end_amdgpu_code_object_metadata
-  .endif
+.macro METADATA wg_x, lds_size
   .if ROCM_METADATA_VERSION == 4
     .amd_amdgpu_hsa_metadata
     { Version: [ 1, 0 ],
@@ -823,7 +937,7 @@ s_endpgm
             Attrs:
               { ReqdWorkGroupSize: [ \wg_x, 1, 1 ] }
             CodeProps:
-              { KernargSegmentSize: 64, GroupSegmentFixedSize: 0, PrivateSegmentFixedSize: 0, KernargSegmentAlign: 8, WavefrontSize: 64, MaxFlatWorkGroupSize: 512 }
+              { KernargSegmentSize: 64, GroupSegmentFixedSize: \lds_size, PrivateSegmentFixedSize: 0, KernargSegmentAlign: 8, WavefrontSize: 64, MaxFlatWorkGroupSize: \wg_x }
             Args:
             - { Name: N       , Size: 4, Align: 4, ValueKind: ByValue, ValueType: I32, TypeName: 'int', AccQual: Default, IsConst: true }
             - { Name: C       , Size: 4, Align: 4, ValueKind: ByValue, ValueType: I32, TypeName: 'int', AccQual: Default, IsConst: true }
@@ -840,23 +954,17 @@ s_endpgm
           }
     }
     .end_amd_amdgpu_hsa_metadata
+  .else
+    .error "Unsupported ROCM_METADATA_VERSION"
+    .end
   .endif
 .endm
 
-.if n_per_group == 8
-    metadata 512
-.elseif n_per_group == 7
-    metadata 448
-.elseif n_per_group == 6
-    metadata 384
-.elseif n_per_group == 5
-    metadata 320
-.elseif n_per_group == 4
-    metadata 256
-.elseif n_per_group == 3
-    metadata 192
-.elseif n_per_group == 2
-    metadata 128
-.else
-    metadata 64
-.endif
+workgroup_size_x = n_per_group * 64
+
+.altmacro
+.macro METADATA_WRAPPER wg_x, lds_size
+    METADATA %\wg_x, %\lds_size
+.endm
+
+METADATA_WRAPPER workgroup_size_x, .AUTO_LDS_BYTE_SIZE

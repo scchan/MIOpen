@@ -23,46 +23,27 @@
  * SOFTWARE.
  *
  *******************************************************************************/
-
-#define PPCAT_NX(A, B) A##B
-#define PPCAT(A, B) PPCAT_NX(A, B)
-#define TWO 2
-#define FOUR 4
-#define EIGHT 8
-
-#if MIOPEN_USE_FP16 == 1
-#pragma OPENCL EXTENSION cl_khr_fp16 : enable
-#define _FLOAT half
-#define _FLOAT_ACCUM float
-#ifndef HALF_MAX
-#define MAX_VAL 65504 /* max value */
-#else
-#define MAX_VAL HALF_MAX
-#endif
-
-#endif
-#if MIOPEN_USE_FP32 == 1
-#define _FLOAT float
-#define _FLOAT_ACCUM float
-#ifndef FLT_MAX
-#define MAX_VAL 3.402823466e+38F /* max value */
-#else
-#define MAX_VAL FLT_MAX
-#endif
-#endif
-
-#define _FLOAT2 PPCAT(_FLOAT, TWO)
-#define _FLOAT4 PPCAT(_FLOAT, FOUR)
-#define _FLOAT8 PPCAT(_FLOAT, EIGHT)
+#include "float_types.h"
 
 #define UNUSED __attribute__((__unused__))
 
-#define DBG_OUT_OF_RNGE 0
+#if MLO_IN_TILE0 == 0
+#error "Error: (MLO_IN_TILE0 == 0)"
+#endif
 
-#define MLO_N_OUT_HORIZ_READS ((MLO_OUT_WIDTH + MLO_IN_TILE0 - 1) / MLO_IN_TILE0)
+#ifndef MLO_OUT_WIDTH_CHUNK
+#error "MLO_OUT_WIDTH_CHUNK is not defined"
+#endif
+
+// MLO_OUT_WIDTH_CHUNK - The length of output row processed by workgroup.
+// If the input row was split into chunks to be fit into LDS, the corresponding output row
+// will be split into chunks so as to fit into private registers.
+
+#define MLO_N_OUT_HORIZ_READS ((MLO_OUT_WIDTH_CHUNK + MLO_IN_TILE0 - 1) / MLO_IN_TILE0)
 #define MLO_N_SPANS_PER_SCAN (MLO_N_OUT_HORIZ_READS)
 #define MLO_N_OUT_HORIZ_PIX_READS (MLO_N_OUT_HORIZ_READS * MLO_IN_TILE0)
-#define MLO_OUT_N_PIXS_OFF (MLO_OUT_WIDTH - ((MLO_OUT_WIDTH / MLO_IN_TILE0) * MLO_IN_TILE0))
+#define MLO_OUT_N_PIXS_OFF \
+    (MLO_OUT_WIDTH_CHUNK - ((MLO_OUT_WIDTH_CHUNK / MLO_IN_TILE0) * MLO_IN_TILE0))
 #define MLO_N_OUT_VERTICAL_READS (MLO_FILTER_SIZE1)
 // won't run non-border blocks if  MLO_IN_N_VERT_LOOPS < 2
 //
@@ -75,14 +56,32 @@
 #define MLO_N_GENERIC_LOOPS 0
 #endif
 
-// there is an assumption that the scanline fits into LDS
-#define MLO_N_IN_HORIZ_PIX_READS (MLO_IN_WIDTH)
+// there is an assumption that the horizontal scanline fits into LDS
+// In case the entire input width can't fit into LDS, the horizontal
+// scanline becomes the chunk of input calculated in solver based on available LDS.
+
+#define MLO_N_IN_HORIZ_PIX_READS (MLO_IN_WIDTH_CHUNK)
 #define MLO_N_IN_HORIZ_READS ((MLO_N_IN_HORIZ_PIX_READS + MLO_READ_UNIT - 1) / MLO_READ_UNIT)
 #define MLO_IN_N_PIXS_OFF \
     (MLO_N_IN_HORIZ_PIX_READS - (MLO_N_IN_HORIZ_PIX_READS / MLO_READ_UNIT) * MLO_READ_UNIT)
+
+#if MLO_IN_WIDTH_N_LOOPS > 1 && MLO_FILTER_PAD0 > 0
+#define MLO_IN_LCL_PADDED_WIDTH (MLO_N_IN_HORIZ_READS * MLO_READ_UNIT + MLO_FILTER_PAD0)
+#define MLO_IN_LCL_UNPADDED_WIDTH (MLO_N_IN_HORIZ_READS * MLO_READ_UNIT)
+#else
 #define MLO_IN_LCL_WIDTH (MLO_N_IN_HORIZ_READS * MLO_READ_UNIT + 2 * MLO_FILTER_PAD0)
+#endif
+
 #define MLO_IN_LCL_HEIGHT MLO_IN_VERT_READS
+
+#if MLO_IN_WIDTH_N_LOOPS > 1 && MLO_FILTER_PAD0 > 0
+#define MLO_IN_LCL_PADDED_SZ (MLO_IN_LCL_PADDED_WIDTH * MLO_IN_LCL_HEIGHT)
+#define MLO_IN_LCL_UNPADDED_SZ (MLO_IN_LCL_UNPADDED_WIDTH * MLO_IN_LCL_HEIGHT)
+#define MLO_IN_LCL_SZ (MLO_IN_LCL_PADDED_SZ) // Assuming padded > unpadded size
+#else
 #define MLO_IN_LCL_SZ (MLO_IN_LCL_WIDTH * MLO_IN_LCL_HEIGHT)
+#endif
+
 #define MLO_TOTAL_IN_LCL_SZ (MLO_N_LCL_BATCHS * MLO_N_LCL_IN_MAPS * MLO_IN_LCL_SZ)
 
 #define MLO_WEI_LCL_SZ (MLO_GRP_SZ * MLO_FILTER_SIZE0)
@@ -92,55 +91,10 @@
 #define MLO_LCL_SZ (MLO_WEI_LCL_SZ)
 #endif
 
-__attribute__((always_inline)) uint iDiv(uint v, uint d)
-{
-    uint r = v / d; //(uint)((float)v * (1.0f / (float)d) + 0.00001f);
-    return (r);
-}
+// if to read all of the number of MLO_N_LCL_IN_MAPS input channel or not
+#define MLO_READ_PARTIAL_N_LCL_IN_MAPS (MLO_N_INPUTS % MLO_N_LCL_IN_MAPS != 0)
 
-__attribute__((always_inline)) uint iMod(uint v, uint u, uint d)
-{
-    uint r = v - mul24((uint)u, (uint)d);
-    return (r);
-}
-
-#if 0
-// This function is for log-reduction of content in LDS,
-// it's supposed to be called by MIOpenCvBwdWrW,
-// However, it's no longer used and not tested.
-__attribute__((always_inline)) void ReduceKernel(__local _FLOAT* lcl_blob,
-                                                 __private _FLOAT* weights_accum,
-                                                 uint lcl_id,
-                                                 uint scan_lcl,
-                                                 uint sum_stride,
-                                                 uint unit_len,
-                                                 UNUSED bool debug)
-{
-    // read first half
-    if(scan_lcl < (sum_stride >> 1))
-    {
-        for(uint i = 0; i < unit_len; ++i)
-        {
-            weights_accum[i] = lcl_blob[(lcl_id + scan_lcl) * unit_len + i];
-        }
-    }
-    // add second half
-    // appload accumulated value so far
-    for(uint j = (sum_stride >> 1); j > 0; j >>= 1)
-    {
-        barrier(CLK_LOCAL_MEM_FENCE);
-        if(scan_lcl < j)
-        {
-            for(uint i = 0; i < unit_len; ++i)
-            {
-                weights_accum[i] += lcl_blob[(lcl_id + j) * unit_len + i];
-
-                lcl_blob[lcl_id * unit_len + i] = weights_accum[i];
-            }
-        }
-    }
-}
-#endif
+#include "math_ops.h"
 
 /*
         group cooperative read
@@ -149,17 +103,31 @@ __attribute__((always_inline)) void ReduceKernel(__local _FLOAT* lcl_blob,
 
         no guard against number of inputs
 */
-__attribute__((always_inline)) void readInput(uint lcl_id,
-                                              uint gbl_in_scan_off,
-                                              uint n_v_reads,
-                                              const __global _FLOAT* __restrict bot,
-                                              __local _FLOAT* __restrict lcl_bot)
+void readInput(uint lcl_id,
+               uint gbl_in_scan_off,
+#if !MLO_READ_PARTIAL_N_LCL_IN_MAPS
+               UNUSED
+#endif
+                   uint n_in_map_reads,
+               uint n_v_reads,
+               const __global _FLOAT* __restrict bot,
+               __local _FLOAT* __restrict lcl_bot,
+               uint chunk_id)
 {
+
+#if MLO_IN_WIDTH_N_LOOPS > 1 && MLO_FILTER_PAD0 > 0
+    uint pad_shift = 0;
+    if(chunk_id == 0)
+    {
+        pad_shift = MLO_FILTER_PAD0;
+    }
+#else
+    uint pad_shift  = MLO_FILTER_PAD0;
+#endif
+
     for(uint p4 = lcl_id; p4 < MLO_N_LCL_IN_MAPS * MLO_N_IN_HORIZ_READS * n_v_reads;
         p4 += MLO_GRP_SZ)
     {
-        __private _FLOAT in_rd_data[MLO_READ_UNIT];
-        // TODO : more than 1 input
         uint c    = 0;
         uint t_p4 = p4;
 #if MLO_N_LCL_IN_MAPS > 1
@@ -175,59 +143,90 @@ __attribute__((always_inline)) void readInput(uint lcl_id,
         uint c_pix4 = t_p4 & (MLO_N_IN_HORIZ_READS - 1);
 #endif
 
-        //		if (c < MLO_N_INPUTS)
+        uint bot_off = gbl_in_scan_off + c * MLO_IN_CHANNEL_STRIDE + c_scan * MLO_IN_STRIDE +
+                       c_pix4 * MLO_READ_UNIT;
+        const __global _FLOAT* bot_p = &bot[bot_off];
 
+        __private _FLOAT in_rd_data[MLO_READ_UNIT];
+
+        for(uint i = 0; i < MLO_READ_UNIT; ++i)
         {
-            uint bot_off = gbl_in_scan_off + c * MLO_IN_CHANNEL_STRIDE + c_scan * MLO_IN_STRIDE +
-                           c_pix4 * MLO_READ_UNIT;
-            const __global _FLOAT* bot_p = &bot[bot_off];
+            in_rd_data[i] = 0;
+        }
+
+#if MLO_READ_PARTIAL_N_LCL_IN_MAPS
+        if(c < n_in_map_reads)
+#endif
+        {
+#if MLO_IN_WIDTH_LAST_CHUNK_VALID_READ_UNITS > 0
+            if(chunk_id == MLO_IN_WIDTH_N_LOOPS - 1 &&
+               c_pix4 < MLO_IN_WIDTH_LAST_CHUNK_VALID_READ_UNITS)
+            {
+                if(c_pix4 == MLO_IN_WIDTH_LAST_CHUNK_VALID_READ_UNITS - 1)
+                {
+                    for(uint i = 0; i < MLO_IN_WIDTH_LAST_CHUNK_VALID_PIXELS_IN_LAST_READ_UNIT; ++i)
+                    {
+                        in_rd_data[i] = bot_p[i];
+                    }
+                }
+                else
+                {
+                    for(uint i = 0; i < MLO_READ_UNIT; ++i)
+                    {
+                        in_rd_data[i] = bot_p[i];
+                    }
+                }
+            }
+            else if(chunk_id != MLO_IN_WIDTH_N_LOOPS - 1)
+#endif
+            {
 #if MLO_IN_N_PIXS_OFF > 0
-
-            if(c_pix4 == MLO_N_IN_HORIZ_READS - 1)
-            {
-                for(uint i = 0; i < MLO_IN_N_PIXS_OFF; ++i)
+                if(c_pix4 == MLO_N_IN_HORIZ_READS - 1)
                 {
-                    in_rd_data[i] = bot_p[i];
-
-#if DBG_OUT_OF_RNGE
-                    if(bot_off + i >= MLO_IN_BATCH_STRIDE * MLO_BATCH_SZ)
+                    for(uint i = 0; i < MLO_IN_N_PIXS_OFF; ++i)
                     {
-                        printf("k:err:out-of-range\n");
+                        in_rd_data[i] = bot_p[i];
                     }
-#endif
                 }
-
-                for(uint i = MLO_IN_N_PIXS_OFF; i < MLO_READ_UNIT; ++i)
-                {
-                    in_rd_data[i] = 0;
-                }
-            }
-            else
+                else
 #endif
-            {
-
-                for(uint i = 0; i < MLO_READ_UNIT; ++i)
                 {
-                    in_rd_data[i] = bot_p[i];
-
-#if DBG_OUT_OF_RNGE
-                    if(bot_off + i >= MLO_IN_BATCH_STRIDE * MLO_BATCH_SZ)
+                    for(uint i = 0; i < MLO_READ_UNIT; ++i)
                     {
-                        printf("k:err:out-of-range\n");
+                        in_rd_data[i] = bot_p[i];
                     }
-#endif
                 }
-            }
-
-            // MLO_N_LCL_IN_MAPS inputs
-            for(uint i = 0; i < MLO_READ_UNIT; ++i)
-            {
-                int lcl_in_off = c * MLO_IN_LCL_SZ + c_scan * MLO_IN_LCL_WIDTH + MLO_FILTER_PAD0 +
-                                 c_pix4 * MLO_READ_UNIT + i;
-                lcl_bot[lcl_in_off] = in_rd_data[i];
             }
         }
 
+#if MLO_IN_WIDTH_N_LOOPS > 1 && MLO_FILTER_PAD0 > 0
+        if(chunk_id == 0 || chunk_id == MLO_IN_WIDTH_N_LOOPS - 1)
+        {
+            for(uint i = 0; i < MLO_READ_UNIT; ++i)
+            {
+                int lcl_in_off = c * MLO_IN_LCL_PADDED_SZ + c_scan * MLO_IN_LCL_PADDED_WIDTH +
+                                 pad_shift + c_pix4 * MLO_READ_UNIT + i;
+                lcl_bot[lcl_in_off] = in_rd_data[i];
+            }
+        }
+        else
+        {
+            for(uint i = 0; i < MLO_READ_UNIT; ++i)
+            {
+                int lcl_in_off = c * MLO_IN_LCL_UNPADDED_SZ + c_scan * MLO_IN_LCL_UNPADDED_WIDTH +
+                                 pad_shift + c_pix4 * MLO_READ_UNIT + i;
+                lcl_bot[lcl_in_off] = in_rd_data[i];
+            }
+        }
+#else
+        (void)chunk_id;
+        for(uint i = 0; i < MLO_READ_UNIT; ++i)
+        {
+            int lcl_in_off = c * MLO_IN_LCL_SZ + c_scan * MLO_IN_LCL_WIDTH + pad_shift +
+                             c_pix4 * MLO_READ_UNIT + i;
+            lcl_bot[lcl_in_off] = in_rd_data[i];
+        }
+#endif
     } // for (int p4 = lcl_id; p4 < MLO_N_LCL_IN_MAPS * MLO_N_IN_HORIZ_READS * MLO_IN_VERT_READS;
 
     barrier(CLK_LOCAL_MEM_FENCE);
@@ -239,15 +238,15 @@ __attribute__((always_inline)) void readInput(uint lcl_id,
         top - output diff, from global (array of spans, filters vertical size)
 
         loop over filter vertical size
-
 */
-__attribute__((always_inline)) void Processing(UNUSED uint sc,
-                                               uint sc_lcl_off,
-                                               uint top_lim,
-                                               int bot_lim,
-                                               __private _FLOAT_ACCUM* __restrict pvt_accum,
-                                               __local _FLOAT* __restrict lcl_bot,
-                                               __private _FLOAT* __restrict top_dat)
+void Processing(UNUSED uint sc,
+                uint sc_lcl_off,
+                uint top_lim,
+                int bot_lim, // bot_lim could be negative at lower boundary padding
+                __private _FLOAT_ACCUM* __restrict pvt_accum,
+                __local _FLOAT* __restrict lcl_bot,
+                __private _FLOAT* __restrict top_dat,
+                uint chunk_id)
 {
     for(int l = top_lim; l >= bot_lim; --l)
     {
@@ -257,7 +256,21 @@ __attribute__((always_inline)) void Processing(UNUSED uint sc,
             {
                 for(uint c = 0; c < MLO_N_LCL_IN_MAPS; ++c)
                 {
-                    int bot_off = sc_lcl_off + c * MLO_IN_LCL_SZ + n + m;
+
+#if MLO_IN_WIDTH_N_LOOPS > 1 && MLO_FILTER_PAD0 > 0
+                    uint bot_off = sc_lcl_off + n + m;
+                    if(chunk_id == 0 || chunk_id == MLO_IN_WIDTH_N_LOOPS - 1)
+                    {
+                        bot_off = bot_off + c * MLO_IN_LCL_PADDED_SZ;
+                    }
+                    else
+                    {
+                        bot_off = bot_off + c * MLO_IN_LCL_UNPADDED_SZ;
+                    }
+#else
+                    (void)chunk_id;
+                    uint bot_off = sc_lcl_off + c * MLO_IN_LCL_SZ + n + m;
+#endif
 
                     _FLOAT bot_val = lcl_bot[bot_off];
 
@@ -270,10 +283,9 @@ __attribute__((always_inline)) void Processing(UNUSED uint sc,
                             l * MLO_FILTER_SIZE0 + n;
 
                         _FLOAT top_val = top_dat[pvt_top_off];
-
                         pvt_accum[pvt_accum_off]
                             // each wk-it process an input
-                            += (_FLOAT_ACCUM)(bot_val * top_val);
+                            += CVT_FLOAT2ACCUM(bot_val) * CVT_FLOAT2ACCUM(top_val);
                     }
                 }
             }
@@ -281,7 +293,7 @@ __attribute__((always_inline)) void Processing(UNUSED uint sc,
     }
 }
 
-__attribute__((always_inline)) void moveOutputUp(__private _FLOAT* __restrict top_dat)
+void moveOutputUp(__private _FLOAT* __restrict top_dat)
 {
     // move up output to reduce overfetch
     for(uint k = 0; k < MLO_N_LCL_OUT_MAPS; ++k)
@@ -298,51 +310,78 @@ __attribute__((always_inline)) void moveOutputUp(__private _FLOAT* __restrict to
     }
 }
 
-__attribute__((always_inline)) void spanReadingOutput(int spn,
-                                                      int k,
-                                                      int j,
-                                                      int top_df_off,
-                                                      _FLOAT mask,
-                                                      __private _FLOAT* __restrict top_dat,
-                                                      const __global _FLOAT* __restrict top_df)
+void zeroInitLDS(uint lcl_id, __local _FLOAT* __restrict lcl_bot)
+{
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    for(uint i = lcl_id; i < (MLO_LCL_SZ); i += MLO_GRP_SZ)
+    {
+        lcl_bot[i] = 0;
+    }
+
+    barrier(CLK_LOCAL_MEM_FENCE);
+}
+
+void spanReadingOutput(int spn,
+                       int k,
+                       int j,
+                       int top_df_off,
+                       _FLOAT mask,
+                       __private _FLOAT* __restrict top_dat,
+                       const __global _FLOAT* __restrict top_df,
+                       uint chunk_id)
 {
     int pvt_off                     = k * MLO_IN_TILE0 * MLO_FILTER_SIZE1 + j * MLO_IN_TILE0;
     const __global _FLOAT* top_df_p = &top_df[top_df_off];
-#if MLO_OUT_N_PIXS_OFF > 0
-    if(spn == MLO_N_SPANS_PER_SCAN - 1)
+#if MLO_OUT_WIDTH_LAST_CHUNK_VALID_SPANS > 0
+    if(chunk_id == MLO_OUT_WIDTH_N_LOOPS - 1 && spn < MLO_OUT_WIDTH_LAST_CHUNK_VALID_SPANS)
     {
-        uint i = 0;
-        for(; i < MLO_OUT_N_PIXS_OFF; ++i)
+        if(spn == MLO_OUT_WIDTH_LAST_CHUNK_VALID_SPANS - 1)
         {
-            top_dat[pvt_off + i] = top_df_p[i] * mask;
-
-#if DBG_OUT_OF_RNGE
-            if(top_df_off + i >= MLO_OUT_BATCH_STRIDE * MLO_BATCH_SZ)
+            uint i = 0;
+            for(; i < MLO_OUT_WIDTH_LAST_CHUNK_VALID_PIXELS_IN_LAST_SPAN; ++i)
             {
-                printf("k:err:out-of-range\n");
+                top_dat[pvt_off + i] = top_df_p[i] * mask;
             }
-#endif
+            for(; i < MLO_IN_TILE0; ++i)
+            {
+                top_dat[pvt_off + i] = 0;
+            }
         }
-        for(; i < MLO_IN_TILE0; ++i)
+        else
         {
-            top_dat[pvt_off + i] = 0;
+            for(uint i = 0; i < MLO_IN_TILE0; ++i)
+            {
+                top_dat[pvt_off + i] = top_df_p[i] * mask;
+            }
         }
     }
-    else
-#else
-    (void)spn;
+    else if(chunk_id != MLO_OUT_WIDTH_N_LOOPS - 1)
 #endif
     {
-        for(uint i = 0; i < MLO_IN_TILE0; ++i)
+#if MLO_OUT_N_PIXS_OFF > 0
+        if(spn == MLO_N_SPANS_PER_SCAN - 1)
         {
-            top_dat[pvt_off + i] = top_df_p[i] * mask;
-
-#if DBG_OUT_OF_RNGE
-            if(top_df_off + i >= MLO_OUT_BATCH_STRIDE * MLO_BATCH_SZ)
+            uint i = 0;
+            for(; i < MLO_OUT_N_PIXS_OFF; ++i)
             {
-                printf("k:err:out-of-range\n");
+                top_dat[pvt_off + i] = top_df_p[i] * mask;
             }
+            for(; i < MLO_IN_TILE0; ++i)
+            {
+                top_dat[pvt_off + i] = 0;
+            }
+        }
+        else
+#else
+        (void)spn;
 #endif
+        {
+            (void)chunk_id;
+            for(uint i = 0; i < MLO_IN_TILE0; ++i)
+            {
+                top_dat[pvt_off + i] = top_df_p[i] * mask;
+            }
         }
     }
 }
@@ -351,7 +390,7 @@ __attribute__((always_inline)) void spanReadingOutput(int spn,
 // wrw algorithm for large filters
 // idea:
 // split output scan-line on number of spans by the  MLO_IN_TILE0 (2 for example)
-// 1 scan-line has ((MLO_OUT_WIDTH + MLO_IN_TILE0 - 1/MLO_IN_TILE0) spans
+// 1 scan-line has ((MLO_OUT_WIDTH_CHUNK + MLO_IN_TILE0 - 1/MLO_IN_TILE0) spans
 // group will process MLO_GRP_SZ/((MLO_OUT_WIDTH + MLO_IN_TILE0 - 1/MLO_IN_TILE0) output maps
 
 // alg
@@ -402,6 +441,14 @@ MIOpenCvBwdWrW(const __global _FLOAT* __restrict top_df,
 
     uint o_idx = o_idx_base * (MLO_N_LCL_OUT_MAPS * MLO_OUT_STACKS); // output map index
 
+#if MLO_READ_PARTIAL_N_LCL_IN_MAPS
+    uint n_in_map_reads = MLO_N_INPUTS >= c_idx + MLO_N_LCL_IN_MAPS
+                              ? MLO_N_LCL_IN_MAPS
+                              : (MLO_N_INPUTS >= c_idx ? MLO_N_INPUTS - c_idx : 0);
+#else
+    uint n_in_map_reads    = MLO_N_LCL_IN_MAPS;
+#endif
+
     uint gbl_in_off  = c_idx * MLO_IN_CHANNEL_STRIDE + ib * MLO_IN_BATCH_STRIDE;
     uint gbl_out_off = o_idx * MLO_OUT_CHANNEL_STRIDE + ib * MLO_OUT_BATCH_STRIDE;
     // 1 span per wk_item, total scanline with MLO_N_SPANS_PER_SCAN spans
@@ -410,7 +457,7 @@ MIOpenCvBwdWrW(const __global _FLOAT* __restrict top_df,
 #if MLO_N_SPANS_PER_SCAN & (MLO_N_SPANS_PER_SCAN - 1)
     uint spn = iMod(lcl_id, o, MLO_N_SPANS_PER_SCAN);
 #else
-    uint spn = lcl_id & (MLO_N_SPANS_PER_SCAN - 1);
+    uint spn               = lcl_id & (MLO_N_SPANS_PER_SCAN - 1);
 #endif
     //	bool scan_lead = (o*MLO_N_SPANS_PER_SCAN == lcl_id);
 
@@ -435,7 +482,7 @@ MIOpenCvBwdWrW(const __global _FLOAT* __restrict top_df,
 
     for(uint i = 0; i < MLO_ACCUM_SZ; ++i)
     {
-        pvt_accum[i] = 0;
+        pvt_accum[i] = (_FLOAT_ACCUM)0;
     }
 
     // zero out LDS
@@ -454,101 +501,85 @@ MIOpenCvBwdWrW(const __global _FLOAT* __restrict top_df,
     {
         barrier(CLK_LOCAL_MEM_FENCE);
 
-        // top border input block
-        uint gbl_in_scan_off  = gbl_in_off;
-        uint gbl_out_scan_off = gbl_out_off;
-
-        // read input map
-        readInput(lcl_id, gbl_in_scan_off, MLO_IN_VERT_READS, bot, lcl_bot);
-
-        // move input pointer
-        gbl_in_scan_off += MLO_IN_STRIDE * MLO_IN_EXTENT1;
-
-        for(uint i = 0; i < MLO_TOP_DAT_SZ; ++i)
+        uint ichunk = 0;
+#if MLO_IN_WIDTH_N_LOOPS > 1
+        for(; ichunk < MLO_IN_WIDTH_N_LOOPS; ++ichunk)
+#endif
         {
-            top_dat[i] = 0;
-        }
-
-        // prefetch output
-        int gbl_out_scan_off1 = gbl_out_scan_off;
-        for(uint k = 0; k < MLO_N_LCL_OUT_MAPS;
-            ++k, gbl_out_scan_off1 += MLO_OUT_STACKS * MLO_OUT_CHANNEL_STRIDE)
-        {
-            for(uint j = 0; j < MLO_FILTER_SIZE1 - 1; ++j)
+            uint filter_shift = 0;
+#if MLO_IN_WIDTH_N_LOOPS > 1
+            if(ichunk != 0)
             {
-                // loop around all output maps
-                uint top_df_off = gbl_out_scan_off1 + j * MLO_OUT_STRIDE;
-                _FLOAT mask     = 1;
+                filter_shift = MLO_FILTER_SIZE0 - 1;
+            }
+#endif
+#if MLO_IN_WIDTH_N_LOOPS > 1 && MLO_FILTER_PAD0 > 0
+            uint lcl_width = (ichunk == 0 || ichunk == MLO_IN_WIDTH_N_LOOPS - 1)
+                                 ? MLO_IN_LCL_PADDED_WIDTH
+                                 : MLO_IN_LCL_UNPADDED_WIDTH;
+#else
+            uint lcl_width = MLO_IN_LCL_WIDTH;
+#endif
+            // top border input block
+            uint gbl_in_scan_off = gbl_in_off + ichunk * MLO_IN_WIDTH_CHUNK - ichunk * filter_shift;
+            uint gbl_out_scan_off = gbl_out_off + ichunk * MLO_OUT_WIDTH_CHUNK;
+
+            // read input map
+            readInput(
+                lcl_id, gbl_in_scan_off, n_in_map_reads, MLO_IN_VERT_READS, bot, lcl_bot, ichunk);
+
+            // move input pointer
+            gbl_in_scan_off += MLO_IN_STRIDE * MLO_IN_EXTENT1;
+
+            for(uint i = 0; i < MLO_TOP_DAT_SZ; ++i)
+            {
+                top_dat[i] = 0;
+            }
+
+            // prefetch output
+            uint gbl_out_scan_off1 = gbl_out_scan_off;
+            for(uint k = 0; k < MLO_N_LCL_OUT_MAPS;
+                ++k, gbl_out_scan_off1 += MLO_OUT_STACKS * MLO_OUT_CHANNEL_STRIDE)
+            {
+                for(uint j = 0; j < MLO_FILTER_SIZE1 - 1; ++j)
+                {
+                    // loop around all output maps
+                    uint top_df_off = gbl_out_scan_off1 + j * MLO_OUT_STRIDE;
+                    _FLOAT mask     = 1;
 #if MLO_IN_HEIGHT != MLO_OUT_HEIGHT || MLO_FILTER_SIZE1 - 1 > MLO_OUT_HEIGHT
-                top_df_off = (j < MLO_OUT_HEIGHT) ? top_df_off : 0;
-                mask       = (j < MLO_OUT_HEIGHT) ? 1 : 0;
+                    top_df_off = (j < MLO_OUT_HEIGHT) ? top_df_off : 0;
+                    mask       = (j < MLO_OUT_HEIGHT) ? 1 : 0;
 #endif
 
-                spanReadingOutput(spn, k, j, top_df_off, mask, top_dat, top_df);
+                    spanReadingOutput(spn, k, j, top_df_off, mask, top_dat, top_df, ichunk);
+                }
             }
-        }
 
-        gbl_out_scan_off += (MLO_FILTER_SIZE1 - 1) * MLO_OUT_STRIDE;
+            gbl_out_scan_off += (MLO_FILTER_SIZE1 - 1) * MLO_OUT_STRIDE;
 
-        uint sc         = 0;
-        uint sc_lcl_off = lcl_bot_off;
+            uint sc         = 0;
+            uint sc_lcl_off = lcl_bot_off;
 
-        // prolog
-        // handling padding
+            // prolog
+            // handling padding
 
-        // top padding
-        for(; sc < MLO_FILTER_SIZE1 - MLO_FILTER_PAD1 - 1; ++sc, sc_lcl_off += MLO_IN_LCL_WIDTH)
-        {
-            Processing(sc, sc_lcl_off, sc + MLO_FILTER_PAD1, 0, pvt_accum, lcl_bot, top_dat);
-        }
+            // top padding
+            for(; sc < MLO_FILTER_SIZE1 - MLO_FILTER_PAD1 - 1; ++sc, sc_lcl_off += lcl_width)
+            {
+                Processing(
+                    sc, sc_lcl_off, sc + MLO_FILTER_PAD1, 0, pvt_accum, lcl_bot, top_dat, ichunk);
+            }
 
 #ifdef __AMDGCN__
 #pragma unroll 2
 #endif
 
 #if MLO_IN_N_VERT_LOOPS == 1
-        for(; sc < MLO_IN_HEIGHT + MLO_FILTER_PAD1 - MLO_FILTER_SIZE1 + 1;
+            for(; sc < MLO_IN_HEIGHT + MLO_FILTER_PAD1 - MLO_FILTER_SIZE1 + 1;
 #else
-        for(; sc < MLO_IN_EXTENT1;
+            for(; sc < MLO_IN_EXTENT1;
 #endif
-            ++sc, gbl_out_scan_off += MLO_OUT_STRIDE, sc_lcl_off += MLO_IN_LCL_WIDTH)
-        {
-
-            for(uint k = 0; k < MLO_N_LCL_OUT_MAPS; ++k)
-            {
-                uint top_df_off = gbl_out_scan_off + k * MLO_OUT_STACKS * MLO_OUT_CHANNEL_STRIDE;
-                _FLOAT mask     = 1;
-
-#if MLO_IN_HEIGHT != MLO_OUT_HEIGHT || MLO_FILTER_SIZE1 - 1 > MLO_OUT_HEIGHT
-                top_df_off = ((sc + MLO_FILTER_PAD1) < MLO_OUT_HEIGHT) ? top_df_off : 0;
-                mask       = ((sc + MLO_FILTER_PAD1) < MLO_OUT_HEIGHT) ? 1 : 0;
-#endif
-
-                spanReadingOutput(
-                    spn, k, (MLO_FILTER_SIZE1 - 1), top_df_off, mask, top_dat, top_df);
-            }
-
-            // processing
-            Processing(sc, sc_lcl_off, MLO_FILTER_SIZE1 - 1, 0, pvt_accum, lcl_bot, top_dat);
-
-            // move up output to reduce overfetch
-            moveOutputUp(top_dat);
-        }
-
-        // non-border input blocks
-        for(uint i_loop = 0; i_loop < MLO_N_GENERIC_LOOPS;
-            ++i_loop, gbl_in_scan_off += MLO_IN_STRIDE * MLO_IN_EXTENT1)
-        {
-            barrier(CLK_LOCAL_MEM_FENCE);
-
-            readInput(lcl_id, gbl_in_scan_off, MLO_IN_VERT_READS, bot, lcl_bot);
-
-            // point to the start of the local buffer
-
-            sc_lcl_off = lcl_bot_off;
-
-            for(; sc < (i_loop + 2) * MLO_IN_EXTENT1;
-                ++sc, gbl_out_scan_off += MLO_OUT_STRIDE, sc_lcl_off += MLO_IN_LCL_WIDTH)
+                ++sc, gbl_out_scan_off += MLO_OUT_STRIDE, sc_lcl_off += lcl_width)
             {
 
                 for(uint k = 0; k < MLO_N_LCL_OUT_MAPS; ++k)
@@ -557,84 +588,165 @@ MIOpenCvBwdWrW(const __global _FLOAT* __restrict top_df,
                         gbl_out_scan_off + k * MLO_OUT_STACKS * MLO_OUT_CHANNEL_STRIDE;
                     _FLOAT mask = 1;
 
-#if MLO_IN_HEIGHT != MLO_OUT_HEIGHT
+#if MLO_IN_HEIGHT != MLO_OUT_HEIGHT || MLO_FILTER_SIZE1 - 1 > MLO_OUT_HEIGHT
                     top_df_off = ((sc + MLO_FILTER_PAD1) < MLO_OUT_HEIGHT) ? top_df_off : 0;
                     mask       = ((sc + MLO_FILTER_PAD1) < MLO_OUT_HEIGHT) ? 1 : 0;
 #endif
 
                     spanReadingOutput(
-                        spn, k, (MLO_FILTER_SIZE1 - 1), top_df_off, mask, top_dat, top_df);
+                        spn, k, (MLO_FILTER_SIZE1 - 1), top_df_off, mask, top_dat, top_df, ichunk);
                 }
 
                 // processing
-                Processing(sc, sc_lcl_off, MLO_FILTER_SIZE1 - 1, 0, pvt_accum, lcl_bot, top_dat);
+                Processing(
+                    sc, sc_lcl_off, MLO_FILTER_SIZE1 - 1, 0, pvt_accum, lcl_bot, top_dat, ichunk);
 
                 // move up output to reduce overfetch
                 moveOutputUp(top_dat);
             }
-        }
 
-        // bottom border block
+            // non-border input blocks
+            for(uint i_loop = 0; i_loop < MLO_N_GENERIC_LOOPS;
+                ++i_loop, gbl_in_scan_off += MLO_IN_STRIDE * MLO_IN_EXTENT1)
+            {
+                barrier(CLK_LOCAL_MEM_FENCE);
 
-        for(int i_loop = 0; i_loop < (MLO_IN_N_VERT_LOOPS - MLO_N_GENERIC_LOOPS - 1);
-            ++i_loop, gbl_in_scan_off += MLO_IN_STRIDE * MLO_IN_EXTENT1)
-        {
-            barrier(CLK_LOCAL_MEM_FENCE);
+                readInput(lcl_id,
+                          gbl_in_scan_off,
+                          n_in_map_reads,
+                          MLO_IN_VERT_READS,
+                          bot,
+                          lcl_bot,
+                          ichunk);
+
+                // point to the start of the local buffer
+
+                sc_lcl_off = lcl_bot_off;
+
+                for(; sc < (i_loop + 2) * MLO_IN_EXTENT1;
+                    ++sc, gbl_out_scan_off += MLO_OUT_STRIDE, sc_lcl_off += lcl_width)
+                {
+
+                    for(uint k = 0; k < MLO_N_LCL_OUT_MAPS; ++k)
+                    {
+                        uint top_df_off =
+                            gbl_out_scan_off + k * MLO_OUT_STACKS * MLO_OUT_CHANNEL_STRIDE;
+                        _FLOAT mask = 1;
+
+#if MLO_IN_HEIGHT != MLO_OUT_HEIGHT
+                        top_df_off = ((sc + MLO_FILTER_PAD1) < MLO_OUT_HEIGHT) ? top_df_off : 0;
+                        mask       = ((sc + MLO_FILTER_PAD1) < MLO_OUT_HEIGHT) ? 1 : 0;
+#endif
+
+                        spanReadingOutput(spn,
+                                          k,
+                                          (MLO_FILTER_SIZE1 - 1),
+                                          top_df_off,
+                                          mask,
+                                          top_dat,
+                                          top_df,
+                                          ichunk);
+                    }
+
+                    // processing
+                    Processing(sc,
+                               sc_lcl_off,
+                               MLO_FILTER_SIZE1 - 1,
+                               0,
+                               pvt_accum,
+                               lcl_bot,
+                               top_dat,
+                               ichunk);
+
+                    // move up output to reduce overfetch
+                    moveOutputUp(top_dat);
+                }
+            }
+
+            // bottom border block
+
+            for(int i_loop = 0; i_loop < (MLO_IN_N_VERT_LOOPS - MLO_N_GENERIC_LOOPS - 1);
+                ++i_loop, gbl_in_scan_off += MLO_IN_STRIDE * MLO_IN_EXTENT1)
+            {
+                barrier(CLK_LOCAL_MEM_FENCE);
 
 // read 1 scan line less
 // padding processing takes care of the bottom border.
 
 #define MLO_LAST_VERT_READS (MLO_IN_HEIGHT - MLO_IN_EXTENT1 * (MLO_IN_N_VERT_LOOPS - 1))
 
-            readInput(lcl_id, gbl_in_scan_off, MLO_LAST_VERT_READS, bot, lcl_bot);
+                readInput(lcl_id,
+                          gbl_in_scan_off,
+                          n_in_map_reads,
+                          MLO_LAST_VERT_READS,
+                          bot,
+                          lcl_bot,
+                          ichunk);
 
-            // point to the start of the local buffer
-            sc_lcl_off = lcl_bot_off;
+                // point to the start of the local buffer
+                sc_lcl_off = lcl_bot_off;
 
 #pragma unroll 3
-            for(; sc < MLO_IN_HEIGHT + MLO_FILTER_PAD1 - MLO_FILTER_SIZE1 + 1;
-                ++sc, gbl_out_scan_off += MLO_OUT_STRIDE, sc_lcl_off += MLO_IN_LCL_WIDTH)
+                for(; sc < MLO_IN_HEIGHT + MLO_FILTER_PAD1 - MLO_FILTER_SIZE1 + 1;
+                    ++sc, gbl_out_scan_off += MLO_OUT_STRIDE, sc_lcl_off += lcl_width)
+                {
+
+                    for(uint k = 0; k < MLO_N_LCL_OUT_MAPS; ++k)
+                    {
+                        uint top_df_off =
+                            gbl_out_scan_off + k * MLO_OUT_STACKS * MLO_OUT_CHANNEL_STRIDE;
+                        _FLOAT mask = 1;
+
+                        spanReadingOutput(spn,
+                                          k,
+                                          (MLO_FILTER_SIZE1 - 1),
+                                          top_df_off,
+                                          mask,
+                                          top_dat,
+                                          top_df,
+                                          ichunk);
+                    }
+
+                    // processing
+                    Processing(sc,
+                               sc_lcl_off,
+                               MLO_FILTER_SIZE1 - 1,
+                               0,
+                               pvt_accum,
+                               lcl_bot,
+                               top_dat,
+                               ichunk);
+
+                    // move up output to reduce overfetch
+                    moveOutputUp(top_dat);
+                }
+            }
+
+            // epilog
+            // handling padding
+
+            for(; sc < MLO_IN_HEIGHT; ++sc, sc_lcl_off += lcl_width)
             {
 
-                for(uint k = 0; k < MLO_N_LCL_OUT_MAPS; ++k)
-                {
-                    uint top_df_off =
-                        gbl_out_scan_off + k * MLO_OUT_STACKS * MLO_OUT_CHANNEL_STRIDE;
-                    _FLOAT mask = 1;
-
-                    spanReadingOutput(
-                        spn, k, (MLO_FILTER_SIZE1 - 1), top_df_off, mask, top_dat, top_df);
-                }
-
                 // processing
-                Processing(sc, sc_lcl_off, MLO_FILTER_SIZE1 - 1, 0, pvt_accum, lcl_bot, top_dat);
+                Processing(sc,
+                           sc_lcl_off,
+                           MLO_FILTER_SIZE1 - 1,
+                           MLO_FILTER_SIZE1 - (MLO_IN_HEIGHT + MLO_FILTER_PAD1 - sc),
+                           pvt_accum,
+                           lcl_bot,
+                           top_dat,
+                           ichunk);
 
                 // move up output to reduce overfetch
                 moveOutputUp(top_dat);
-            }
-        }
+            } // epilog handling loop
 
-        // epilog
-        // handling padding
-
-        for(; sc < MLO_IN_HEIGHT; ++sc, sc_lcl_off += MLO_IN_LCL_WIDTH)
-        {
-
-            // processing
-            Processing(sc,
-                       sc_lcl_off,
-                       MLO_FILTER_SIZE1 - 1,
-                       MLO_FILTER_SIZE1 - (MLO_IN_HEIGHT + MLO_FILTER_PAD1 - sc),
-                       pvt_accum,
-                       lcl_bot,
-                       top_dat);
-            // move up output to reduce overfetch
-            moveOutputUp(top_dat);
-
-        } // for (; sc < MLO_OUT_HEIGHT - MLO_FILTER_PAD1 + 2; ++sc, gbl_out_scan_off +=
-          // MLO_OUT_CHANNEL_STRIDE, gbl_in_scan_off += MLO_IN_CHANNEL_STRIDE)
-
-    } // 	for (int b = 0;
+#if MLO_OUT_WIDTH_N_LOOPS > 1 && MLO_FILTER_PAD0 > 0
+            zeroInitLDS(lcl_id, lcl_bot);
+#endif
+        } // row-level  loop
+    }     // batch-level loop
 
     // final summation over all output maps and each filter row
     // this coudl be done with log but it negligeble anyway
@@ -653,7 +765,7 @@ MIOpenCvBwdWrW(const __global _FLOAT* __restrict top_df,
                         (k * MLO_N_LCL_IN_MAPS + c) * MLO_FILTER_SIZE1 * MLO_FILTER_SIZE0 +
                         l * MLO_FILTER_SIZE0 + n;
 
-                    lcl[lcl_id * MLO_FILTER_SIZE0 + n] = pvt_accum[pvt_off];
+                    lcl[lcl_id * MLO_FILTER_SIZE0 + n] = CVT_ACCUM2FLOAT(pvt_accum[pvt_off]);
                 }
 
                 barrier(CLK_LOCAL_MEM_FENCE);
@@ -668,7 +780,8 @@ MIOpenCvBwdWrW(const __global _FLOAT* __restrict top_df,
                             uint pvt_off =
                                 (k * MLO_N_LCL_IN_MAPS + c) * MLO_FILTER_SIZE1 * MLO_FILTER_SIZE0 +
                                 l * MLO_FILTER_SIZE0 + n;
-                            pvt_accum[pvt_off] += lcl[(lcl_id + s + 1) * MLO_FILTER_SIZE0 + n];
+                            pvt_accum[pvt_off] +=
+                                CVT_FLOAT2ACCUM(lcl[(lcl_id + s + 1) * MLO_FILTER_SIZE0 + n]);
                         }
                     }
                 }
@@ -684,19 +797,21 @@ MIOpenCvBwdWrW(const __global _FLOAT* __restrict top_df,
         (((ib / MLO_N_BATCH_LOOPS) * MLO_N_OUTPUTS + o_idx + o) * (uint)MLO_WEI_BATCH_STRIDE)
         // this input channel
         + mul24(c_idx, (uint)MLO_WEI_CHANNEL_STRIDE);
+
     for(uint k = 0; k < MLO_N_LCL_OUT_MAPS; ++k)
     {
-        if(spn == 0 && o_idx + o + k * MLO_OUT_STACKS < MLO_N_OUTPUTS && o < MLO_OUT_STACKS)
+        for(uint c = 0; c < MLO_N_LCL_IN_MAPS; ++c)
         {
-            for(uint c = 0; c < MLO_N_LCL_IN_MAPS; ++c)
+            if(spn == 0 && c < n_in_map_reads && o_idx + o + k * MLO_OUT_STACKS < MLO_N_OUTPUTS &&
+               o < MLO_OUT_STACKS)
             {
                 for(uint i = 0; i < (MLO_FILTER_SIZE1 * MLO_FILTER_SIZE0); ++i)
                 {
                     weights_df[wei_df_off + k * MLO_OUT_STACKS * MLO_WEI_BATCH_STRIDE +
                                c * MLO_WEI_CHANNEL_STRIDE + i] =
-                        pvt_accum[(k * MLO_N_LCL_IN_MAPS + c) * MLO_FILTER_SIZE1 *
-                                      MLO_FILTER_SIZE0 +
-                                  i];
+                        CVT_ACCUM2FLOAT(pvt_accum[(k * MLO_N_LCL_IN_MAPS + c) * MLO_FILTER_SIZE1 *
+                                                      MLO_FILTER_SIZE0 +
+                                                  i]);
                 }
             }
         }
@@ -720,7 +835,7 @@ MIOpenCvBwdWrW_rdc(const __global _FLOAT* __restrict weight_df_tmp,
     uint wei_idx     = wei_idx0 & (MLO_WEI_CHANNEL_STRIDE - 1);
 #endif
 
-    _FLOAT pvt_accum_wei[MLO_UT_READ_UNIT] = {MLO_UT_READ_UNIT * (_FLOAT)0};
+    _FLOAT_ACCUM pvt_accum_wei[MLO_UT_READ_UNIT] = {MLO_UT_READ_UNIT * 0};
     //	for (uint i = 0; i < MLO_UT_READ_UNIT; ++i)
     //	{
     //		pvt_accum_wei[i] = 0;
@@ -733,14 +848,15 @@ MIOpenCvBwdWrW_rdc(const __global _FLOAT* __restrict weight_df_tmp,
     {
         for(uint j = 0; j < MLO_UT_READ_UNIT; ++j)
         {
-            pvt_accum_wei[j] += weight_df_tmp[(wei_blk_idx * MLO_WEI_CHANNEL_STRIDE +
+            pvt_accum_wei[j] +=
+                CVT_FLOAT2ACCUM(weight_df_tmp[(wei_blk_idx * MLO_WEI_CHANNEL_STRIDE +
                                                i * MLO_N_OUTPUTS * MLO_WEI_BATCH_STRIDE) +
-                                              wei_idx + j];
+                                              wei_idx + j]);
         }
     }
 
     for(uint j = 0; j < MLO_UT_READ_UNIT; ++j)
     {
-        weights_df[wei_idx0 + j] = pvt_accum_wei[j];
+        weights_df[wei_idx0 + j] = CVT_ACCUM2FLOAT(pvt_accum_wei[j]);
     }
 }
