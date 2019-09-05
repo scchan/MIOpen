@@ -2,6 +2,7 @@
 #include <boost/filesystem.hpp>
 #include <miopen/errors.hpp>
 #include <miopen/logger.hpp>
+#include <cstdio>
 
 namespace miopen {
 
@@ -23,6 +24,9 @@ TmpDir::TmpDir(std::string prefix)
     : path(boost::filesystem::temp_directory_path() /
            boost::filesystem::unique_path("miopen-" + prefix + "-%%%%-%%%%-%%%%-%%%%"))
 {
+    printf("create tmp directory: %s\n", this->path.string().c_str());
+    fflush(stdout);
+    fflush(stderr);
     boost::filesystem::create_directories(this->path);
 }
 
@@ -33,6 +37,8 @@ void TmpDir::Execute(std::string exe, std::string args)
     SystemCmd(cmd);
 }
 
-TmpDir::~TmpDir() { boost::filesystem::remove_all(this->path); }
+TmpDir::~TmpDir() { 
+  //  boost::filesystem::remove_all(this->path); 
+    }
 
 } // namespace miopen
